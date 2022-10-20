@@ -31,6 +31,7 @@ func NewMySQLStorer(ctx context.Context, uri string) (Storer, error) {
 		q.Del("ssl-mode")
 		q.Add("tls", "true")
 	}
+	u.RawQuery = q.Encode()
 	connStr, err := dburl.GenMysql(u)
 	if err != nil {
 		return nil, err
