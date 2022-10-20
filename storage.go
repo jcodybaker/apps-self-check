@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	"strings"
 
 	sq "github.com/Masterminds/squirrel"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/xo/dburl"
 )
 
 // Storer instances store stuff.
@@ -21,8 +21,15 @@ type mysqlStorer struct {
 
 // NewMySQLStorer creates a new storer driver for a MySQL backend.
 func NewMySQLStorer(ctx context.Context, uri string) (Storer, error) {
-	uri = strings.TrimPrefix(uri, "mysql://")
-	db, err := sql.Open("mysql", uri)
+	u, err := dburl.Parse(uri)
+	if err != nil {
+		return nil, err
+	}
+	connStr, err := dburl.GenMysql(u)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("mysql", connStr)
 	if err != nil {
 		return nil, err
 	}
