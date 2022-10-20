@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	sq "github.com/Masterminds/squirrel"
 	_ "github.com/go-sql-driver/mysql"
@@ -24,6 +25,11 @@ func NewMySQLStorer(ctx context.Context, uri string) (Storer, error) {
 	u, err := dburl.Parse(uri)
 	if err != nil {
 		return nil, err
+	}
+	q := u.Query()
+	if strings.EqualFold(q.Get("ssl-mode"), "required") {
+		q.Del("ssl-mode")
+		q.Add("tls", "true")
 	}
 	connStr, err := dburl.GenMysql(u)
 	if err != nil {
