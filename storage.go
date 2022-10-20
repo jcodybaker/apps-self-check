@@ -65,7 +65,6 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 
 // SaveCheckResults saves check results.
 func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults) (err error) {
-	m.db.Begin()
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelDefault,
 	})
