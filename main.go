@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
 	"time"
@@ -20,6 +23,10 @@ const (
 func main() {
 	port := defaultPort
 	bindAddr := defaultBindArr
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	if p := os.Getenv("PORT"); p != "" {
 		var err error
 		if port, err = strconv.ParseUint(p, 10, 16); err != nil {
@@ -30,11 +37,14 @@ func main() {
 		bindAddr = b
 	}
 
-	ctx := context.Background()
-
 	storer, err := NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
+	}
+
+	labels, err := parseLabels(os.Getenv("LABELS"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("parsing labels")
 	}
 
 	c := NewChecker(
@@ -42,6 +52,7 @@ func main() {
 		WithCheck("self_public_http", checkMust(NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
 		WithCheck("self_private_url", checkMust(NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
 		WithCheck("internal_dns", checkMust(NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
+		WithLabels(labels),
 		WithStorer(storer),
 	)
 	mux := http.NewServeMux()
@@ -70,7 +81,6 @@ func main() {
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal().Err(err).Msg("failed to start server")
 	}
-
 }
 
 func checkMust(c Check, err error) Check {
@@ -83,4 +93,22 @@ func checkMust(c Check, err error) Check {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, http.StatusText(http.StatusOK), http.StatusOK)
+}
+
+func parseLabels(labels string) (map[string]string, error) {
+	out := make(map[string]string)
+	asQuery, err := url.ParseQuery(labels)
+	if err != nil {
+		return nil, fmt.Errorf("parsing labels: %w", err)
+	}
+	for k, vs := range asQuery {
+		if len(vs) == 0 {
+			continue
+		}
+		if len(vs) > 1 {
+			return nil, fmt.Errorf("label %q had multiple values", k)
+		}
+		out[k] = vs[0]
+	}
+	return out, nil
 }
