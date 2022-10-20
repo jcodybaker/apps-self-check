@@ -2,13 +2,22 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
+	"errors"
+	"fmt"
+	"io/ioutil"
 	"strings"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/xo/dburl"
 )
+
+// mysqlConfigID ensures any certificates registered against the driver are given a unique name.
+var mysqlConfigID = 1
 
 // Storer instances store stuff.
 type Storer interface {
@@ -21,15 +30,22 @@ type mysqlStorer struct {
 }
 
 // NewMySQLStorer creates a new storer driver for a MySQL backend.
-func NewMySQLStorer(ctx context.Context, uri string) (Storer, error) {
+func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 	u, err := dburl.Parse(uri)
 	if err != nil {
 		return nil, err
 	}
 	q := u.Query()
-	if strings.EqualFold(q.Get("ssl-mode"), "required") {
+	tlsMode := "true"
+	if cert != "" {
+		tlsMode, err = registerMySQLCertificate(cert)
+		if err != nil {
+			return nil, fmt.Errorf("loading TLS cert: %w", err)
+		}
+	}
+	if cert != "" || strings.EqualFold(q.Get("ssl-mode"), "required") {
 		q.Del("ssl-mode")
-		q.Add("tls", "true")
+		q.Add("tls", tlsMode)
 	}
 	u.RawQuery = q.Encode()
 	connStr, err := dburl.GenMysql(u)
@@ -93,6 +109,28 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 	}
 
 	return nil
+}
+
+func registerMySQLCertificate(cert string) (string, error) {
+	rootCertPool := x509.NewCertPool()
+	pem := []byte(cert)
+	if strings.HasPrefix(cert, "/") {
+		var err error
+		pem, err = ioutil.ReadFile("/path/ca-cert.pem")
+		if err != nil {
+			return "", err
+		}
+	}
+	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+		return "", errors.New("appending certificate to pool")
+	}
+
+	mysqlConfigName := fmt.Sprintf("custom%d", mysqlConfigID)
+	mysqlConfigID++
+	mysql.RegisterTLSConfig(mysqlConfigName, &tls.Config{
+		RootCAs: rootCertPool,
+	})
+	return mysqlConfigName, nil
 }
 
 func (m *mysqlStorer) init(ctx context.Context) error {

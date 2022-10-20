@@ -32,7 +32,7 @@ func main() {
 
 	ctx := context.Background()
 
-	storer, err := NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"))
+	storer, err := NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
 	}
