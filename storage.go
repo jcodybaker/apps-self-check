@@ -69,6 +69,9 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelDefault,
 	})
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
 	defer func() {
 		if err != nil {
 			tx.Rollback()
@@ -79,7 +82,7 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 
 	r, err := sq.Insert("checks").Columns("app_id", "ts").Values(result.AppID, result.TS).RunWith(tx).ExecContext(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("storing check result: %w", err)
 	}
 	id, err := r.LastInsertId()
 	if err != nil {
@@ -91,21 +94,27 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 		for k, v := range result.Labels {
 			q = q.Values(id, k, v)
 		}
-		_, err = q.RunWith(tx).ExecContext(ctx)
+		if _, err = q.RunWith(tx).ExecContext(ctx); err != nil {
+			return fmt.Errorf("storing labels: %w", err)
+		}
 	}
 	if len(result.Errors) > 0 {
 		q := sq.Insert("check_errors").Columns("check_id", "check_name", "error")
 		for _, e := range result.Errors {
 			q = q.Values(id, e.Check, e.Error.Error())
 		}
-		_, err = q.RunWith(tx).ExecContext(ctx)
+		if _, err = q.RunWith(tx).ExecContext(ctx); err != nil {
+			return fmt.Errorf("storing errors: %w", err)
+		}
 	}
 	if len(result.Measurements) > 0 {
 		q := sq.Insert("check_measurements").Columns("check_id", "measurement", "value")
 		for _, e := range result.Measurements {
 			q = q.Values(id, e.Check, e.Value)
 		}
-		_, err = q.RunWith(tx).ExecContext(ctx)
+		if _, err = q.RunWith(tx).ExecContext(ctx); err != nil {
+			return fmt.Errorf("storing measurements: %w", err)
+		}
 	}
 
 	return nil
