@@ -89,7 +89,6 @@ type checker struct {
 func (c *checker) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	ll := log.Ctx(ctx)
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
@@ -99,9 +98,7 @@ func (c *checker) Run(ctx context.Context, interval time.Duration) {
 			if ctx.Err() != nil {
 				return // abandon results if the ctx was canceled mid-check.
 			}
-			if err := c.storer.SaveCheckResults(ctx, r); err != nil {
-				ll.Err(err).Msg("saving check results")
-			}
+			c.storer.AsyncSaveCheckResults(ctx, r, SaveBackOffSchedule)
 		}
 	}
 }
@@ -134,7 +131,7 @@ func (c *checker) doChecks(ctx context.Context) CheckResults {
 		if err != nil {
 			r.Errors = append(r.Errors, CheckError{
 				Check: ch.name,
-				Error: err,
+				Error: err.Error(),
 			})
 			start = c.now()
 			continue
@@ -160,6 +157,10 @@ func NewDNSCheck(hostname string) (Check, error) {
 		}
 		if u.Host != "" {
 			hostname = u.Host
+			// discard any port
+			if host, _, err := net.SplitHostPort(u.Host); err != nil {
+				hostname = host
+			}
 		}
 	}
 	return func(ctx context.Context) ([]CheckMeasurement, error) {

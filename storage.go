@@ -8,25 +8,60 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/rs/zerolog/log"
 	"github.com/xo/dburl"
+)
+
+const (
+	// dyingBreathExpiration defines a grace period after the ctx has been canceled, when async
+	// saves will be attempted before returning.
+	dyingBreathExpiration = 1 * time.Second
 )
 
 // mysqlConfigID ensures any certificates registered against the driver are given a unique name.
 var mysqlConfigID = 1
 
+var (
+	SaveBackOffSchedule = []time.Duration{
+		0,
+		10 * time.Millisecond,
+		100 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		32 * time.Second,
+	}
+)
+
 // Storer instances store stuff.
 type Storer interface {
 	// SaveCheckResults saves check results.
 	SaveCheckResults(ctx context.Context, result CheckResults) (err error)
+
+	// AsyncSaveCheckResults saves check results asynchronously with retries on failure.
+	AsyncSaveCheckResults(ctx context.Context, result CheckResults, attemptSchedule []time.Duration)
+
+	// Close triggers any asynchronous saves to immediately make a final attempt, waits briefly
+	// for their completion, and closes database connections..
+	Close() error
 }
 
 type mysqlStorer struct {
-	db *sql.DB
+	db        *sql.DB
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewMySQLStorer creates a new storer driver for a MySQL backend.
@@ -56,8 +91,16 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &mysqlStorer{db: db}
+	// Open() only inits the config & pool, do a Ping() to establish/validate a connection.
+	if err := db.PingContext(ctx); err != nil {
+		return nil, err
+	}
+	m := &mysqlStorer{
+		db:   db,
+		done: make(chan struct{}),
+	}
 	if err := m.init(ctx); err != nil {
+		m.Close()
 		return nil, err
 	}
 	return m, nil
@@ -100,7 +143,11 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 	if len(result.Errors) > 0 {
 		q := sq.Insert("check_errors").Columns("check_id", "check_name", "error")
 		for _, e := range result.Errors {
-			q = q.Values(id, e.Check, e.Error.Error())
+			errStr := e.Error
+			if len(errStr) > 512 { // Truncate to fit column.
+				errStr = errStr[:512]
+			}
+			q = q.Values(id, e.Check, errStr)
 		}
 		if _, err = q.RunWith(tx).ExecContext(ctx); err != nil {
 			return fmt.Errorf("storing errors: %w", err)
@@ -117,6 +164,60 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 	}
 
 	return nil
+}
+
+// AsyncSaveCheckResults saves check results asynchronously with retries on failure.
+func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result CheckResults, attemptSchedule []time.Duration) {
+	m.wg.Add(1)
+	ll := log.Ctx(ctx)
+	go func() {
+		defer m.wg.Done()
+		var err error
+		for i, delay := range attemptSchedule {
+			var dyingBreath bool
+			if delay > 0 {
+				t := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					dyingBreath = true
+				case <-t.C:
+				case <-m.done:
+					dyingBreath = true
+				}
+				if dyingBreath {
+					// We're shutting down, but haven't successfully saved yet. Make a hail mary
+					// attempt with a fresh (but short-lived) ctx.
+					var cancel func()
+					ctx, cancel = context.WithTimeout(context.Background(), dyingBreathExpiration)
+					defer cancel()
+				}
+			}
+			err = m.SaveCheckResults(ctx, result)
+			if err == nil {
+				return
+			}
+			if i+1 < len(attemptSchedule) {
+				ll.Warn().Err(err).Msg("saving results to database asynchronously")
+			}
+			result.Errors = append(result.Errors, CheckError{
+				Check: "result_save_attempt_" + strconv.Itoa(i+1),
+				Error: err.Error(),
+			})
+			if dyingBreath || ctx.Err() != nil {
+				return
+			}
+		}
+		ll.Error().Err(err).Msg("final attempt: saving results to database asynchronously")
+	}()
+}
+
+// Close shuts down the database handle and any async savers.
+func (m *mysqlStorer) Close() error {
+	m.closeOnce.Do(func() {
+		close(m.done)
+	})
+	m.wg.Wait()
+	return m.db.Close()
 }
 
 func registerMySQLCertificate(cert string) (string, error) {
@@ -159,7 +260,7 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS check_errors (
 			check_id INT NOT NULL,
 			check_name VARCHAR(64) NOT NULL,
-			error VARCHAR(128) NOT NULL,
+			error VARCHAR(512) NOT NULL,
 			KEY check_name (check_name),
 			PRIMARY KEY(check_id, check_name)
 		)

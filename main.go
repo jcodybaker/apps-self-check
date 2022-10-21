@@ -42,6 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
 	}
+	defer storer.Close()
 
 	labels, err := parseLabels(os.Getenv("LABELS"))
 	if err != nil {

@@ -4,7 +4,7 @@ import "time"
 
 type CheckError struct {
 	Check string
-	Error error
+	Error string
 }
 
 type CheckResults struct {
