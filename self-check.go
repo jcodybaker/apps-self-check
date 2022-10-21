@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -26,7 +27,8 @@ type Check func(context.Context) ([]CheckMeasurement, error)
 // NewChecker creates a checker.
 func NewChecker(opts ...CheckerOption) *checker {
 	c := &checker{
-		now: time.Now,
+		now:      time.Now,
+		hostname: func(hostname string, _ error) string { return hostname }(os.Hostname()),
 	}
 	for _, o := range opts {
 		o(c)
