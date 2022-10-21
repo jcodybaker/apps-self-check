@@ -61,7 +61,7 @@ func main() {
 	if checkDB := os.Getenv("CHECK_DATABASE_URL"); checkDB != "" {
 		if strings.HasPrefix(checkDB, "mysql") {
 			checkerOpts = append(checkerOpts,
-				WithCheck("database", checkMust(NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CERT")))))
+				WithCheck("database", checkMust(NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
 		}
 		checkerOpts = append(checkerOpts,
 			WithCheck("database_dns", checkMust(NewDNSCheck(checkDB))))
@@ -87,8 +87,10 @@ func main() {
 		}()
 	}
 
+	serverAddr := net.JoinHostPort(bindAddr, strconv.Itoa(int(port)))
+	log.Ctx(ctx).Info().Str("addr", serverAddr).Msg("starting server")
 	server := http.Server{
-		Addr:    net.JoinHostPort(bindAddr, strconv.Itoa(int(port))),
+		Addr:    serverAddr,
 		Handler: mux,
 	}
 	if err := server.ListenAndServe(); err != nil {

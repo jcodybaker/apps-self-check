@@ -158,7 +158,7 @@ func NewDNSCheck(hostname string) (Check, error) {
 		if u.Host != "" {
 			hostname = u.Host
 			// discard any port
-			if host, _, err := net.SplitHostPort(u.Host); err != nil {
+			if host, _, err := net.SplitHostPort(u.Host); err == nil {
 				hostname = host
 			}
 		}
