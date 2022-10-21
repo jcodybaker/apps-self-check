@@ -79,7 +79,7 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 		}
 	}()
 
-	r, err := sq.Insert("checks").Columns("app_id", "ts").Values(result.AppID, result.TS).RunWith(tx).ExecContext(ctx)
+	r, err := sq.Insert("checks").Columns("app_id", "hostname", "ts").Values(result.AppID, result.Hostname, result.TS).RunWith(tx).ExecContext(ctx)
 	if err != nil {
 		return fmt.Errorf("storing check result: %w", err)
 	}
@@ -145,6 +145,7 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 	_, err := m.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS checks (
 			id INT NOT NULL AUTO_INCREMENT,
+			hostname VARCHAR(64) NOT NULL,
 			app_id CHAR(36) NOT NULL,
 			ts TIMESTAMP(6) NOT NULL,
 			KEY app_id_ts (app_id, ts),

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,14 +48,25 @@ func main() {
 		log.Fatal().Err(err).Msg("parsing labels")
 	}
 
-	c := NewChecker(
+	checkerOpts := []CheckerOption{
 		WithAppID(os.Getenv("APP_ID")),
 		WithCheck("self_public_http", checkMust(NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
 		WithCheck("self_private_url", checkMust(NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
 		WithCheck("internal_dns", checkMust(NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
 		WithLabels(labels),
 		WithStorer(storer),
-	)
+	}
+
+	if checkDB := os.Getenv("CHECK_DATABASE_URL"); checkDB != "" {
+		if strings.HasPrefix(checkDB, "mysql") {
+			checkerOpts = append(checkerOpts,
+				WithCheck("database", checkMust(NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CERT")))))
+		}
+		checkerOpts = append(checkerOpts,
+			WithCheck("database_dns", checkMust(NewDNSCheck(checkDB))))
+	}
+
+	c := NewChecker(checkerOpts...)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/check", c.HTTPHandler)

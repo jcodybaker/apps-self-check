@@ -10,6 +10,7 @@ type CheckError struct {
 type CheckResults struct {
 	TS           time.Time
 	AppID        string
+	Hostname     string
 	Labels       map[string]string
 	Errors       []CheckError
 	Measurements []CheckMeasurement

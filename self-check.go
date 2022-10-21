@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/iancoleman/strcase"
 	"github.com/rs/zerolog/log"
+	"github.com/xo/dburl"
 )
 
 // Check describes a function which validates this app.
@@ -74,11 +77,12 @@ type check struct {
 }
 
 type checker struct {
-	now    func() time.Time
-	appID  string
-	storer Storer
-	labels map[string]string
-	checks []check
+	now      func() time.Time
+	appID    string
+	hostname string
+	storer   Storer
+	labels   map[string]string
+	checks   []check
 }
 
 // Run executes periodically until the ctx is cancelled.
@@ -119,9 +123,10 @@ func (c *checker) HTTPHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *checker) doChecks(ctx context.Context) CheckResults {
 	r := CheckResults{
-		TS:     c.now(),
-		AppID:  c.appID,
-		Labels: c.labels,
+		TS:       c.now(),
+		AppID:    c.appID,
+		Labels:   c.labels,
+		Hostname: c.hostname,
 	}
 	start := r.TS
 	for _, ch := range c.checks {
@@ -176,11 +181,6 @@ func NewHTTPCheck(url string) (Check, error) {
 		return nil, errors.New("http check requires url")
 	}
 	return func(ctx context.Context) ([]CheckMeasurement, error) {
-		// u, err := url.Parse(os.Getenv("PUBLIC_URL"))
-		// if err != nil {
-		// 	return nil, fmt.Errorf("parsing URL: %w", err)
-		// }
-		// u.Path = "/health"
 		c := http.Client{}
 		defer c.CloseIdleConnections()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -192,6 +192,67 @@ func NewHTTPCheck(url string) (Check, error) {
 			return nil, err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			var additionalInfo string
+			if originCode := resp.Header.Get("x-do-orig-status"); originCode != "" {
+				additionalInfo += " origin-code=" + originCode
+			}
+			if msg := resp.Header.Get("x-do-failure-msg"); msg != "" {
+				additionalInfo += " " + msg
+			}
+			if code := resp.Header.Get("x-do-failure-code"); code != "" {
+				additionalInfo += " " + code
+			}
+			return nil, fmt.Errorf("unexpected status code: %d%s", resp.StatusCode, additionalInfo)
+		}
 		return nil, nil
+	}, nil
+}
+
+// NewMySQLCheck will connect to the provided mysql server, execute a ping and disconnect.
+func NewMySQLCheck(uri, cert string) (Check, error) {
+	// All of this only gets done once.
+	u, err := dburl.Parse(uri)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	tlsMode := "true"
+	if cert != "" {
+		tlsMode, err = registerMySQLCertificate(cert)
+		if err != nil {
+			return nil, fmt.Errorf("loading TLS cert: %w", err)
+		}
+	}
+	if cert != "" || strings.EqualFold(q.Get("ssl-mode"), "required") {
+		q.Del("ssl-mode")
+		q.Add("tls", tlsMode)
+	}
+	u.RawQuery = q.Encode()
+	connStr, err := dburl.GenMysql(u)
+	if err != nil {
+		return nil, err
+	}
+	config, err := mysql.ParseDSN(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing dsn")
+	}
+	// We make a connector directly because we don't want the built-in "database/sql" pooling.
+	connector, err := mysql.NewConnector(config)
+	if err != nil {
+		return nil, fmt.Errorf("building mysql connector")
+	}
+	// Ok we are FINALLY done with all of the setup.  This is the real check.
+	return func(ctx context.Context) ([]CheckMeasurement, error) {
+		dbConn, err := connector.Connect(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer dbConn.Close()
+		pinger, ok := dbConn.(driver.Pinger)
+		if !ok {
+			return nil, errors.New("mysql driver missing Ping(ctx)")
+		}
+		return nil, pinger.Ping(ctx)
 	}, nil
 }
