@@ -1,4 +1,4 @@
-package main
+package checker
 
 import (
 	"context"
@@ -13,22 +13,27 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/digitalocean/apps-self-check/pkg/storer"
+	"github.com/digitalocean/apps-self-check/pkg/types/check"
 	"github.com/go-sql-driver/mysql"
 	"github.com/iancoleman/strcase"
 	"github.com/rs/zerolog/log"
 	"github.com/xo/dburl"
 )
 
-// Check describes a function which validates this app.
-type Check func(context.Context) ([]CheckMeasurement, error)
+const (
+	defaultTimeout = 6 * time.Second
+)
 
 // NewChecker creates a checker.
 func NewChecker(opts ...CheckerOption) *checker {
 	c := &checker{
 		now:      time.Now,
 		hostname: func(hostname string, _ error) string { return hostname }(os.Hostname()),
+		timeout:  defaultTimeout,
 	}
 	for _, o := range opts {
 		o(c)
@@ -54,12 +59,12 @@ func WithLabels(l map[string]string) CheckerOption {
 }
 
 // WithCheck adds a Check function. If name is empty, we will attempt to determine one from the func.
-func WithCheck(name string, f Check) CheckerOption {
+func WithCheck(name string, f check.Check) CheckerOption {
 	if name == "" {
 		name = strings.TrimPrefix(runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name(), "github.com/digitalocean/apps-self-check")
 	}
 	return func(c *checker) {
-		c.checks = append(c.checks, check{
+		c.checks = append(c.checks, checkFunc{
 			f:    f,
 			name: strcase.ToSnake(name),
 		})
@@ -67,14 +72,21 @@ func WithCheck(name string, f Check) CheckerOption {
 }
 
 // WithStorer adds a storer to the checker.
-func WithStorer(s Storer) CheckerOption {
+func WithStorer(s storer.Storer) CheckerOption {
 	return func(c *checker) {
 		c.storer = s
 	}
 }
 
-type check struct {
-	f    Check
+// WithTimeout sets a timeout for all tests.
+func WithTimeout(timeout time.Duration) CheckerOption {
+	return func(c *checker) {
+		c.timeout = timeout
+	}
+}
+
+type checkFunc struct {
+	f    check.Check
 	name string
 }
 
@@ -82,25 +94,36 @@ type checker struct {
 	now      func() time.Time
 	appID    string
 	hostname string
-	storer   Storer
+	storer   storer.Storer
 	labels   map[string]string
-	checks   []check
+	checks   []checkFunc
+	timeout  time.Duration
 }
 
 // Run executes periodically until the ctx is cancelled.
 func (c *checker) Run(ctx context.Context, interval time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r := c.doChecks(ctx)
-			if ctx.Err() != nil {
-				return // abandon results if the ctx was canceled mid-check.
-			}
-			c.storer.AsyncSaveCheckResults(ctx, r, SaveBackOffSchedule)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r := c.doChecks(ctx)
+				if ctx.Err() != nil {
+					return // abandon results if the ctx was canceled mid-check.
+				}
+				c.storer.AsyncSaveCheckResults(ctx, r, storer.SaveBackOffSchedule)
+			}()
 		}
 	}
 }
@@ -120,37 +143,48 @@ func (c *checker) HTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (c *checker) doChecks(ctx context.Context) CheckResults {
-	r := CheckResults{
+func (c *checker) doChecks(ctx context.Context) check.CheckResults {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	r := check.CheckResults{
 		TS:       c.now(),
 		AppID:    c.appID,
 		Labels:   c.labels,
 		Hostname: c.hostname,
 	}
-	start := r.TS
+	var l sync.Mutex
 	for _, ch := range c.checks {
-		measurements, err := ch.f(ctx)
-		if err != nil {
-			r.Errors = append(r.Errors, CheckError{
-				Check: ch.name,
-				Error: err.Error(),
+		ch := ch
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := c.now()
+			measurements, err := ch.f(ctx)
+			finish := c.now()
+			l.Lock()
+			defer l.Unlock()
+			if err != nil {
+				if ctx.Err() != nil { // If parent ctx is canceled this test isn't to blame.
+					return
+				}
+				r.Errors = append(r.Errors, check.CheckError{
+					Check: ch.name,
+					Error: err.Error(),
+				})
+				return
+			}
+			r.Measurements = append(r.Measurements, measurements...)
+			r.Measurements = append(r.Measurements, check.CheckMeasurement{
+				Check: ch.name + "_duration",
+				Value: finish.Sub(start).Seconds(),
 			})
-			start = c.now()
-			continue
-		}
-		r.Measurements = append(r.Measurements, measurements...)
-		finish := c.now()
-		r.Measurements = append(r.Measurements, CheckMeasurement{
-			Check: ch.name + "_duration",
-			Value: finish.Sub(start).Seconds(),
-		})
-		start = finish
+		}()
 	}
 	return r
 }
 
 // NewDNSCheck adds a check which probes the specified hostname
-func NewDNSCheck(hostname string) (Check, error) {
+func NewDNSCheck(hostname string) (check.Check, error) {
 	if strings.Contains(hostname, "://") {
 		// If it looks like a URL, we'll try to isolate the hostname.
 		u, err := url.Parse(hostname)
@@ -165,7 +199,7 @@ func NewDNSCheck(hostname string) (Check, error) {
 			}
 		}
 	}
-	return func(ctx context.Context) ([]CheckMeasurement, error) {
+	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
 		ips, err := net.LookupHost(hostname)
 		if err != nil {
 			return nil, err
@@ -179,11 +213,11 @@ func NewDNSCheck(hostname string) (Check, error) {
 
 // NewHTTPCheck creates a new Check which verifies HTTP connectivity to the specified URL. DNS will
 // be resolved exactly once.
-func NewHTTPCheck(url string) (Check, error) {
+func NewHTTPCheck(url string) (check.Check, error) {
 	if url == "" {
 		return nil, errors.New("http check requires url")
 	}
-	return func(ctx context.Context) ([]CheckMeasurement, error) {
+	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
 		c := http.Client{}
 		defer c.CloseIdleConnections()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -213,7 +247,7 @@ func NewHTTPCheck(url string) (Check, error) {
 }
 
 // NewMySQLCheck will connect to the provided mysql server, execute a ping and disconnect.
-func NewMySQLCheck(uri, cert string) (Check, error) {
+func NewMySQLCheck(uri, cert string) (check.Check, error) {
 	// All of this only gets done once.
 	u, err := dburl.Parse(uri)
 	if err != nil {
@@ -222,7 +256,7 @@ func NewMySQLCheck(uri, cert string) (Check, error) {
 	q := u.Query()
 	tlsMode := "true"
 	if cert != "" {
-		tlsMode, err = registerMySQLCertificate(cert)
+		tlsMode, err = storer.RegisterMySQLCertificate(cert)
 		if err != nil {
 			return nil, fmt.Errorf("loading TLS cert: %w", err)
 		}
@@ -246,7 +280,7 @@ func NewMySQLCheck(uri, cert string) (Check, error) {
 		return nil, fmt.Errorf("building mysql connector")
 	}
 	// Ok we are FINALLY done with all of the setup.  This is the real check.
-	return func(ctx context.Context) ([]CheckMeasurement, error) {
+	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
 		dbConn, err := connector.Connect(ctx)
 		if err != nil {
 			return nil, err

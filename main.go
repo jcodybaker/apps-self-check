@@ -13,6 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalocean/apps-self-check/pkg/checker"
+	"github.com/digitalocean/apps-self-check/pkg/storer"
+	"github.com/digitalocean/apps-self-check/pkg/types/check"
 	"github.com/rs/zerolog/log"
 )
 
@@ -38,7 +41,7 @@ func main() {
 		bindAddr = b
 	}
 
-	storer, err := NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
+	storer, err := storer.NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
 	}
@@ -49,25 +52,25 @@ func main() {
 		log.Fatal().Err(err).Msg("parsing labels")
 	}
 
-	checkerOpts := []CheckerOption{
-		WithAppID(os.Getenv("APP_ID")),
-		WithCheck("self_public_http", checkMust(NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
-		WithCheck("self_private_url", checkMust(NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
-		WithCheck("internal_dns", checkMust(NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
-		WithLabels(labels),
-		WithStorer(storer),
+	checkerOpts := []checker.CheckerOption{
+		checker.WithAppID(os.Getenv("APP_ID")),
+		checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
+		checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
+		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
+		checker.WithLabels(labels),
+		checker.WithStorer(storer),
 	}
 
 	if checkDB := os.Getenv("CHECK_DATABASE_URL"); checkDB != "" {
 		if strings.HasPrefix(checkDB, "mysql") {
 			checkerOpts = append(checkerOpts,
-				WithCheck("database", checkMust(NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
+				checker.WithCheck("database", checkMust(checker.NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
 		}
 		checkerOpts = append(checkerOpts,
-			WithCheck("database_dns", checkMust(NewDNSCheck(checkDB))))
+			checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB))))
 	}
 
-	c := NewChecker(checkerOpts...)
+	c := checker.NewChecker(checkerOpts...)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/check", c.HTTPHandler)
@@ -98,7 +101,7 @@ func main() {
 	}
 }
 
-func checkMust(c Check, err error) Check {
+func checkMust(c check.Check, err error) check.Check {
 	if err == nil {
 		return c
 	}

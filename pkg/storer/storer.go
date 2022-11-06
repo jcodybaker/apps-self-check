@@ -1,4 +1,4 @@
-package main
+package storer
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/digitalocean/apps-self-check/pkg/types/check"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/go-sql-driver/mysql"
@@ -47,14 +49,16 @@ var (
 // Storer instances store stuff.
 type Storer interface {
 	// SaveCheckResults saves check results.
-	SaveCheckResults(ctx context.Context, result CheckResults) (err error)
+	SaveCheckResults(ctx context.Context, result check.CheckResults) (err error)
 
 	// AsyncSaveCheckResults saves check results asynchronously with retries on failure.
-	AsyncSaveCheckResults(ctx context.Context, result CheckResults, attemptSchedule []time.Duration)
+	AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration)
 
 	// Close triggers any asynchronous saves to immediately make a final attempt, waits briefly
 	// for their completion, and closes database connections..
 	Close() error
+
+	AnalyzeLongestGapPerApp(ctx context.Context, start, end time.Time, output func(appID string, interval time.Duration, maxIntervalTS time.Time)) error
 }
 
 type mysqlStorer struct {
@@ -73,7 +77,7 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 	q := u.Query()
 	tlsMode := "true"
 	if cert != "" {
-		tlsMode, err = registerMySQLCertificate(cert)
+		tlsMode, err = RegisterMySQLCertificate(cert)
 		if err != nil {
 			return nil, fmt.Errorf("loading TLS cert: %w", err)
 		}
@@ -82,6 +86,7 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 		q.Del("ssl-mode")
 		q.Add("tls", tlsMode)
 	}
+	q.Add("parseTime", "true")
 	u.RawQuery = q.Encode()
 	connStr, err := dburl.GenMysql(u)
 	if err != nil {
@@ -107,7 +112,7 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 }
 
 // SaveCheckResults saves check results.
-func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults) (err error) {
+func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckResults) (err error) {
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelDefault,
 	})
@@ -167,7 +172,7 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result CheckResults)
 }
 
 // AsyncSaveCheckResults saves check results asynchronously with retries on failure.
-func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result CheckResults, attemptSchedule []time.Duration) {
+func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
 	m.wg.Add(1)
 	ll := log.Ctx(ctx)
 	go func() {
@@ -199,7 +204,7 @@ func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result CheckRes
 			if i+1 < len(attemptSchedule) {
 				ll.Warn().Err(err).Msg("saving results to database asynchronously")
 			}
-			result.Errors = append(result.Errors, CheckError{
+			result.Errors = append(result.Errors, check.CheckError{
 				Check: "result_save_attempt_" + strconv.Itoa(i+1),
 				Error: err.Error(),
 			})
@@ -220,12 +225,12 @@ func (m *mysqlStorer) Close() error {
 	return m.db.Close()
 }
 
-func registerMySQLCertificate(cert string) (string, error) {
+func RegisterMySQLCertificate(cert string) (string, error) {
 	rootCertPool := x509.NewCertPool()
 	pem := []byte(cert)
 	if strings.HasPrefix(cert, "/") {
 		var err error
-		pem, err = ioutil.ReadFile("/path/ca-cert.pem")
+		pem, err = ioutil.ReadFile(cert)
 		if err != nil {
 			return "", err
 		}
@@ -293,4 +298,51 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (m *mysqlStorer) AnalyzeLongestGapPerApp(
+	ctx context.Context,
+	start time.Time,
+	end time.Time,
+	output func(appID string, interval time.Duration, maxIntervalTS time.Time),
+) error {
+	q := sq.Select("app_id", "ts").
+		From("checks").
+		Where(sq.And{sq.GtOrEq{"ts": start}, sq.LtOrEq{"ts": end}}).
+		OrderBy("app_id", "ts ASC")
+	rows, err := q.RunWith(m.db).QueryContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var maxInterval time.Duration = -1
+	var maxIntervalTS, lastTS time.Time
+	var lastAppID string
+	for rows.Next() {
+		var appID string
+		var ts time.Time
+		if err := rows.Scan(&appID, &ts); err != nil {
+			return err
+		}
+		if appID != lastAppID {
+			if lastAppID != "" && maxInterval > 0 {
+				output(lastAppID, maxInterval, maxIntervalTS)
+			}
+			lastAppID = appID
+			lastTS = ts
+			maxIntervalTS = ts
+			maxInterval = -1
+			continue
+		}
+		interval := ts.Sub(lastTS)
+		if interval > maxInterval {
+			maxInterval = interval
+			maxIntervalTS = ts
+		}
+		lastTS = ts
+	}
+	if lastAppID != "" && maxInterval > 0 {
+		output(lastAppID, maxInterval, maxIntervalTS)
+	}
+	return rows.Err()
 }

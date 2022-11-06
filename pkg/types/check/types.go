@@ -1,6 +1,9 @@
-package main
+package check
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type CheckError struct {
 	Check string
@@ -20,3 +23,6 @@ type CheckMeasurement struct {
 	Check string
 	Value float64
 }
+
+// Check describes a function which validates this app.
+type Check func(context.Context) ([]CheckMeasurement, error)

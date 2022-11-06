@@ -7,6 +7,9 @@ github.com/go-sql-driver/mysql
 # github.com/iancoleman/strcase v0.2.0
 ## explicit; go 1.16
 github.com/iancoleman/strcase
+# github.com/inconshreveable/mousetrap v1.0.1
+## explicit; go 1.18
+github.com/inconshreveable/mousetrap
 # github.com/lann/builder v0.0.0-20180802200727-47ae307949d0
 ## explicit
 github.com/lann/builder
@@ -25,6 +28,14 @@ github.com/rs/zerolog
 github.com/rs/zerolog/internal/cbor
 github.com/rs/zerolog/internal/json
 github.com/rs/zerolog/log
+# github.com/spf13/cobra v1.6.1
+## explicit; go 1.15
+github.com/spf13/cobra
+# github.com/spf13/pflag v1.0.5
+## explicit; go 1.12
+github.com/spf13/pflag
+# github.com/stretchr/testify v1.8.0
+## explicit; go 1.13
 # github.com/xo/dburl v0.12.4
 ## explicit; go 1.19
 github.com/xo/dburl
