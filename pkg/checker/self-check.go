@@ -108,7 +108,6 @@ func (c *checker) Run(ctx context.Context, interval time.Duration) {
 	defer wg.Wait()
 
 	for ctx.Err() == nil {
-
 		select {
 		case <-ctx.Done():
 			return
@@ -116,9 +115,9 @@ func (c *checker) Run(ctx context.Context, interval time.Duration) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(ctx, c.timeout)
+				checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
 				defer cancel()
-				r := c.doChecks(ctx)
+				r := c.doChecks(checkCtx)
 				if ctx.Err() != nil {
 					return // abandon results if the ctx was canceled mid-check.
 				}
