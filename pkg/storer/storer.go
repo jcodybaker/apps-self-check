@@ -189,13 +189,13 @@ func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result check.Ch
 				case <-m.done:
 					dyingBreath = true
 				}
-				if dyingBreath {
-					// We're shutting down, but haven't successfully saved yet. Make a hail mary
-					// attempt with a fresh (but short-lived) ctx.
-					var cancel func()
-					ctx, cancel = context.WithTimeout(context.Background(), dyingBreathExpiration)
-					defer cancel()
-				}
+			}
+			if dyingBreath || ctx.Err() != nil {
+				// We're shutting down, but haven't successfully saved yet. Make a hail mary
+				// attempt with a fresh (but short-lived) ctx.
+				var cancel func()
+				ctx, cancel = context.WithTimeout(context.Background(), dyingBreathExpiration)
+				defer cancel()
 			}
 			err = m.SaveCheckResults(ctx, result)
 			if err == nil {
