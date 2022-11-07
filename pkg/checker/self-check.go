@@ -160,6 +160,11 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 			start := c.now()
 			measurements, err := ch.f(ctx)
 			finish := c.now()
+			log.Ctx(ctx).Debug().
+				Str("check", ch.name).
+				Dur("duration", finish.Sub(start)).
+				Err(err).
+				Msg("check finished")
 			l.Lock()
 			defer l.Unlock()
 			if err != nil {
