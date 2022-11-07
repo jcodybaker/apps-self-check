@@ -41,7 +41,7 @@ func main() {
 		bindAddr = b
 	}
 
-	storer, err := storer.NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
+	storer, err := storer.New(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
 	}
@@ -96,7 +96,17 @@ func main() {
 		Addr:    serverAddr,
 		Handler: mux,
 	}
-	if err := server.ListenAndServe(); err != nil {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Error().Err(err).Msg("shutting down server")
+		}
+	}()
+	if err := server.ListenAndServe(); err != nil && ctx.Err() == nil {
 		log.Fatal().Err(err).Msg("failed to start server")
 	}
 }

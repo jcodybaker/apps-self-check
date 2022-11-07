@@ -144,7 +144,6 @@ func (c *checker) HTTPHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 	var wg sync.WaitGroup
-	defer wg.Wait()
 	r := check.CheckResults{
 		TS:       c.now(),
 		AppID:    c.appID,
@@ -154,6 +153,9 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 	var l sync.Mutex
 	for _, ch := range c.checks {
 		ch := ch
+		log.Ctx(ctx).Info().
+			Str("check", ch.name).
+			Msg("check started")
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -184,6 +186,7 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 			})
 		}()
 	}
+	wg.Wait()
 	return r
 }
 
