@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
@@ -18,43 +16,25 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/rs/zerolog/log"
 	"github.com/xo/dburl"
 )
 
 const (
-	// dyingBreathExpiration defines a grace period after the ctx has been canceled, when async
-	// saves will be attempted before returning.
-	dyingBreathExpiration = 1 * time.Second
+	defaultConnectTimeout = "10s"
+	defaultReadTimeout    = "10s"
+	defaultWriteTimeout   = "10s"
 )
 
 // mysqlConfigID ensures any certificates registered against the driver are given a unique name.
 var mysqlConfigID = 1
 
-var (
-	SaveBackOffSchedule = []time.Duration{
-		0,
-		10 * time.Millisecond,
-		100 * time.Millisecond,
-		500 * time.Millisecond,
-		1 * time.Second,
-		2 * time.Second,
-		4 * time.Second,
-		8 * time.Second,
-		16 * time.Second,
-		32 * time.Second,
-	}
-)
-
 type mysqlStorer struct {
-	db        *sql.DB
-	done      chan struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup
+	db *sql.DB
+	commonStorer
 }
 
 // NewMySQLStorer creates a new storer driver for a MySQL backend.
-func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
+func NewMySQLStorer(ctx context.Context, uri, cert string, createTables bool) (Storer, error) {
 	u, err := dburl.Parse(uri)
 	if err != nil {
 		return nil, err
@@ -72,6 +52,15 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 		q.Add("tls", tlsMode)
 	}
 	q.Add("parseTime", "true")
+	if !q.Has("timeout") {
+		q.Add("timeout", defaultConnectTimeout)
+	}
+	if !q.Has("writeTimeout") {
+		q.Add("writeTimeout", defaultWriteTimeout)
+	}
+	if !q.Has("readTimeout") {
+		q.Add("readTimeout", defaultReadTimeout)
+	}
 	u.RawQuery = q.Encode()
 	connStr, err := dburl.GenMysql(u)
 	if err != nil {
@@ -86,10 +75,9 @@ func NewMySQLStorer(ctx context.Context, uri, cert string) (Storer, error) {
 		return nil, err
 	}
 	m := &mysqlStorer{
-		db:   db,
-		done: make(chan struct{}),
+		db: db,
 	}
-	if err := m.init(ctx); err != nil {
+	if err := m.init(ctx, createTables); err != nil {
 		m.Close()
 		return nil, err
 	}
@@ -158,47 +146,7 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckRe
 
 // AsyncSaveCheckResults saves check results asynchronously with retries on failure.
 func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
-	m.wg.Add(1)
-	ll := log.Ctx(ctx)
-	go func() {
-		defer m.wg.Done()
-		var err error
-		for i, delay := range attemptSchedule {
-			var dyingBreath bool
-			if delay > 0 {
-				t := time.NewTimer(delay)
-				select {
-				case <-ctx.Done():
-					dyingBreath = true
-				case <-t.C:
-				case <-m.done:
-					dyingBreath = true
-				}
-			}
-			if dyingBreath || ctx.Err() != nil {
-				// We're shutting down, but haven't successfully saved yet. Make a hail mary
-				// attempt with a fresh (but short-lived) ctx.
-				var cancel func()
-				ctx, cancel = context.WithTimeout(context.Background(), dyingBreathExpiration)
-				defer cancel()
-			}
-			err = m.SaveCheckResults(ctx, result)
-			if err == nil {
-				return
-			}
-			if i+1 < len(attemptSchedule) {
-				ll.Warn().Err(err).Msg("saving results to database asynchronously")
-			}
-			result.Errors = append(result.Errors, check.CheckError{
-				Check: "result_save_attempt_" + strconv.Itoa(i+1),
-				Error: err.Error(),
-			})
-			if dyingBreath || ctx.Err() != nil {
-				return
-			}
-		}
-		ll.Error().Err(err).Msg("final attempt: saving results to database asynchronously")
-	}()
+	asyncSaveCheckResults(ctx, m, result, attemptSchedule)
 }
 
 // Close shuts down the database handle and any async savers.
@@ -232,21 +180,38 @@ func RegisterMySQLCertificate(cert string) (string, error) {
 	return mysqlConfigName, nil
 }
 
-func (m *mysqlStorer) init(ctx context.Context) error {
-	_, err := m.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS checks (
-			id INT NOT NULL AUTO_INCREMENT,
-			hostname VARCHAR(64) NOT NULL,
-			app_id CHAR(36) NOT NULL,
-			ts TIMESTAMP(6) NOT NULL,
-			KEY app_id_ts (app_id, ts),
-			PRIMARY KEY(id)
-		)
-	`)
+func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
+	m.commonStorer.init()
+	if !createTables {
+		return nil
+	}
+	exists, err := m.tableExists(ctx, "checks")
 	if err != nil {
 		return err
 	}
-	_, err = m.db.ExecContext(ctx, `
+	if !exists {
+		// We keep the "IF NOT EXISTS" because there may be other instances creating these tables.
+		_, err := m.db.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS checks (
+				id INT NOT NULL AUTO_INCREMENT,
+				hostname VARCHAR(64) NOT NULL,
+				app_id CHAR(36) NOT NULL,
+				ts TIMESTAMP(6) NOT NULL,
+				KEY app_id_ts (app_id, ts),
+				PRIMARY KEY(id)
+			)
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	exists, err = m.tableExists(ctx, "check_errors")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		_, err = m.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS check_errors (
 			check_id INT NOT NULL,
 			check_name VARCHAR(64) NOT NULL,
@@ -255,10 +220,17 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 			PRIMARY KEY(check_id, check_name)
 		)
 	`)
+		if err != nil {
+			return err
+		}
+	}
+
+	exists, err = m.tableExists(ctx, "check_measurements")
 	if err != nil {
 		return err
 	}
-	_, err = m.db.ExecContext(ctx, `
+	if !exists {
+		_, err = m.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS check_measurements (
 			check_id INT NOT NULL,
 			measurement VARCHAR(64) NOT NULL,
@@ -267,10 +239,17 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 			PRIMARY KEY(check_id, measurement)
 		)
 `)
+		if err != nil {
+			return err
+		}
+	}
+
+	exists, err = m.tableExists(ctx, "check_labels")
 	if err != nil {
 		return err
 	}
-	_, err = m.db.ExecContext(ctx, `
+	if !exists {
+		_, err = m.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS check_labels (
 			check_id INT NOT NULL,
 			k VARCHAR(64) NOT NULL,
@@ -279,8 +258,9 @@ func (m *mysqlStorer) init(ctx context.Context) error {
 			PRIMARY KEY(check_id, k)
 		)
 	`)
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -289,11 +269,16 @@ func (m *mysqlStorer) AnalyzeLongestGapPerApp(
 	ctx context.Context,
 	start time.Time,
 	end time.Time,
+	apps []string,
 	output func(appID string, interval time.Duration, maxIntervalTS time.Time),
 ) error {
+	cond := sq.And{sq.GtOrEq{"ts": start}, sq.LtOrEq{"ts": end}}
+	if len(apps) > 0 {
+		cond = append(cond, sq.Eq{"app_id": apps})
+	}
 	q := sq.Select("app_id", "ts").
 		From("checks").
-		Where(sq.And{sq.GtOrEq{"ts": start}, sq.LtOrEq{"ts": end}}).
+		Where(cond).
 		OrderBy("app_id", "ts ASC")
 	rows, err := q.RunWith(m.db).QueryContext(ctx)
 	if err != nil {
@@ -330,4 +315,14 @@ func (m *mysqlStorer) AnalyzeLongestGapPerApp(
 		output(lastAppID, maxInterval, maxIntervalTS)
 	}
 	return rows.Err()
+}
+
+func (m *mysqlStorer) tableExists(ctx context.Context, table string) (bool, error) {
+	err := m.db.QueryRowContext(ctx, `SELECT 1 FROM `+table).Err()
+	if mErr, ok := err.(*mysql.MySQLError); ok {
+		if mErr.Number == 1146 {
+			return false, nil
+		}
+	}
+	return true, nil
 }

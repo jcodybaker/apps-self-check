@@ -4,6 +4,9 @@ github.com/Masterminds/squirrel
 # github.com/go-sql-driver/mysql v1.6.0
 ## explicit; go 1.10
 github.com/go-sql-driver/mysql
+# github.com/golang/mock v1.6.1-0.20220107202009-96d9cb5c44ba
+## explicit; go 1.11
+github.com/golang/mock/gomock
 # github.com/iancoleman/strcase v0.2.0
 ## explicit; go 1.16
 github.com/iancoleman/strcase

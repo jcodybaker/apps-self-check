@@ -19,5 +19,15 @@ type Storer interface {
 	// for their completion, and closes database connections..
 	Close() error
 
-	AnalyzeLongestGapPerApp(ctx context.Context, start, end time.Time, output func(appID string, interval time.Duration, maxIntervalTS time.Time)) error
+	AnalyzeLongestGapPerApp(ctx context.Context, start, end time.Time, apps []string, output func(appID string, interval time.Duration, maxIntervalTS time.Time)) error
+}
+
+type storer interface {
+	Storer
+
+	wgAdd(int)
+	wgDone()
+	wgWait()
+
+	doneChan() <-chan struct{}
 }

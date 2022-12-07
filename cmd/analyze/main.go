@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/digitalocean/apps-self-check/pkg/storer"
@@ -17,7 +17,7 @@ var ctx context.Context
 var maxInterval = &cobra.Command{
 	Use: "analyze",
 	Run: func(cmd *cobra.Command, args []string) {
-		storer, err := storer.NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
+		storer, err := storer.NewMySQLStorer(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"), false)
 		if err != nil {
 			log.Fatal().Err(err).Msg("creating storer")
 		}
@@ -38,7 +38,25 @@ var maxInterval = &cobra.Command{
 		if err != nil {
 			log.Fatal().Err(err).Msg("parsing end timestamp")
 		}
-		err = storer.AnalyzeLongestGapPerApp(ctx, startTS, endTS, func(appID string, interval time.Duration, maxIntervalTS time.Time) {
+		appIDs, err := cmd.Flags().GetStringSlice("apps")
+		if err != nil {
+			log.Fatal().Err(err).Msg("reading apps flag")
+		}
+		appsFile, err := cmd.Flags().GetString("apps-file")
+		if err != nil {
+			log.Fatal().Err(err).Msg("reading apps-file flag")
+		}
+		if appsFile != "" {
+			b, err := os.ReadFile(appsFile)
+			if err != nil {
+				log.Fatal().Err(err).Msg("loading apps-file")
+			}
+			for _, appID := range strings.Split(string(b), "\n") {
+				appIDs = append(appIDs, strings.Trim(strings.TrimSpace(appID), `",`))
+			}
+
+		}
+		err = storer.AnalyzeLongestGapPerApp(ctx, startTS, endTS, appIDs, func(appID string, interval time.Duration, maxIntervalTS time.Time) {
 			fmt.Printf("%s,%f,%v\n", appID, interval.Seconds(), maxIntervalTS)
 		})
 		if err != nil {
@@ -50,12 +68,15 @@ var maxInterval = &cobra.Command{
 func init() {
 	maxInterval.Flags().String("start", "", "start timestamp")
 	maxInterval.Flags().String("end", "", "start timestamp")
+	maxInterval.Flags().String("apps-file", "", "file listing app ids to query")
+	maxInterval.Flags().StringSlice("apps", []string{}, "list of app ids to query")
 }
 
 func main() {
-	var stop func()
-	ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	// var stop func()
+	// ctx, stop = signal.NotifyContext(context.Background(), os.Interrupt)
+	// defer stop()
+	ctx = context.Background()
 
 	if err := maxInterval.Execute(); err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
