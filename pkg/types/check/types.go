@@ -3,12 +3,12 @@ package check
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/miekg/dns"
 )
 
 type Instance struct {
@@ -41,22 +41,27 @@ func NewInstance() (*Instance, error) {
 
 func (i *Instance) UpdatePublicIPv4(ctx context.Context) error {
 	// dig +short myip.opendns.com @resolver1.opendns.com
-	r := net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, "resolver1.opendns.com:53")
-		},
+	m := new(dns.Msg)
+	m.SetQuestion("myip.opendns.com.", dns.TypeA)
+	c := dns.Client{
+		Net: "tcp", // Forcing TCP mode overrides Docker's DNS intercept for local dev.
 	}
-	ips, err := r.LookupIP(ctx, "ip4", "myip.opendns.com")
+	in, _, err := c.Exchange(m, "resolver1.opendns.com:53")
 	if err != nil {
 		return err
 	}
-	if len(ips) != 1 {
-		return fmt.Errorf("unexpected number of public IPs: %d", len(ips))
+	if len(in.Answer) != 1 {
+		return fmt.Errorf("unexpected number of public IPs: %d", len(in.Answer))
 	}
+	a, ok := in.Answer[0].(*dns.A)
+	if !ok {
+		return fmt.Errorf("unexpected answer type: %T", in.Answer[0])
+	}
+
 	i.Lock()
 	defer i.Unlock()
-	i.PublicIPv4 = ips[0].String()
+
+	i.PublicIPv4 = a.A.String()
 	return nil
 }
 
