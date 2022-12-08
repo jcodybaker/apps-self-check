@@ -16,6 +16,7 @@ import (
 	"github.com/digitalocean/apps-self-check/pkg/checker"
 	"github.com/digitalocean/apps-self-check/pkg/storer"
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
+	"github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -30,8 +31,11 @@ func main() {
 	bindAddr := defaultBindArr
 
 	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	ll := zerolog.New(os.Stdout)
+	ctx := ll.WithContext(context.Background())
 
-	ctx := zerolog.New(os.Stdout).WithContext(context.Background())
+	mysqlLogger := ll.With().Str("component", "mysql").Logger()
+	mysql.SetLogger(&mysqlLogger)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
