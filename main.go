@@ -16,6 +16,7 @@ import (
 	"github.com/digitalocean/apps-self-check/pkg/checker"
 	"github.com/digitalocean/apps-self-check/pkg/storer"
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -28,7 +29,11 @@ func main() {
 	port := defaultPort
 	bindAddr := defaultBindArr
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+
+	ctx := zerolog.New(os.Stdout).WithContext(context.Background())
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 
 	if p := os.Getenv("PORT"); p != "" {
@@ -57,10 +62,18 @@ func main() {
 		log.Fatal().Err(err).Msg("parsing labels")
 	}
 
+	s.AsyncQueryRetry(
+		ctx,
+		storer.SaveBackOffSchedule,
+		func(ctx context.Context, attempt int) error {
+			return s.UpdateInstance(ctx, instance)
+		})
+
 	checkerOpts := []checker.CheckerOption{
 		checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
 		checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
 		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
+		checker.WithInstance(instance),
 		checker.WithStorer(s),
 	}
 
@@ -95,7 +108,6 @@ func main() {
 				return s.UpdateInstance(ctx, instance)
 			})
 	}()
-	wg.Add(1)
 	s.AsyncQueryRetry(
 		ctx,
 		storer.SaveBackOffSchedule,

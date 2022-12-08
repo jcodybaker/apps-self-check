@@ -75,7 +75,7 @@ func (c *commonStorer) AsyncQueryRetry(
 				return
 			}
 			if attempt < len(attemptSchedule) {
-				ll.Warn().Err(err).Int("attempt", attempt).Msg("saving results to database asynchronously")
+				ll.Warn().Err(err).Int("attempt", attempt).Msg("performing async database action")
 			}
 			if dyingBreath || ctx.Err() != nil {
 				return
@@ -83,6 +83,6 @@ func (c *commonStorer) AsyncQueryRetry(
 		}
 		ll.Error().Err(err).
 			Int("attempt", len(attemptSchedule)).
-			Msg("final attempt: saving results to database asynchronously")
+			Msg("final attempt: performing async database action")
 	}()
 }

@@ -88,6 +88,9 @@ func NewMySQLStorer(ctx context.Context, uri, cert string, createTables bool) (S
 
 // SaveCheckResults saves check results.
 func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckResults) (err error) {
+	if err := m.ensureInstance(ctx, result.Instance); err != nil {
+		return fmt.Errorf("ensuring instance: %w", err)
+	}
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelDefault,
 	})
@@ -189,13 +192,13 @@ func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
 				app_id CHAR(36) NULL,
 				public_ipv4 CHAR(15) NULL,
 				started_at TIMESTAMP(6) NOT NULL,
-				stopped_at TIMESTAMP(6) NOT NULL,
+				stopped_at TIMESTAMP(6) NULL,
 				KEY app_id (app_id),
 				KEY public_ipv4 (public_ipv4),
 				KEY hostname (hostname),
 				KEY started_at (started_at),
 				KEY stopped_at (stopped_at),
-				UNIQUE KEY uuid (uuid)
+				UNIQUE KEY uuid (uuid),
 				PRIMARY KEY(id)
 			)
 		`)
@@ -273,7 +276,7 @@ func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
 			k VARCHAR(64) NOT NULL,
 			v VARCHAR(64) NOT NULL,
 			KEY kv (k, v),
-			PRIMARY KEY(check_id, k)
+			PRIMARY KEY(instance_id, k)
 		)
 	`)
 		if err != nil {
@@ -359,8 +362,8 @@ func (m *mysqlStorer) ensureInstance(ctx context.Context, instance *check.Instan
 func (m *mysqlStorer) updateInstance(ctx context.Context, instance *check.Instance) error {
 	r, err := sq.Insert("instances").Columns(
 		"uuid",
-		"hostname",
 		"app_id",
+		"hostname",
 		"public_ipv4",
 		"started_at",
 		"stopped_at",
@@ -375,8 +378,8 @@ func (m *mysqlStorer) updateInstance(ctx context.Context, instance *check.Instan
 	ON DUPLICATE KEY UPDATE
 	id = LAST_INSERT_ID(id),
 	uuid = VALUES(uuid),
-	hostname = VALUES(hostname),
 	app_id = VALUES(app_id),
+	hostname = VALUES(hostname),
 	public_ipv4 = VALUES(public_ipv4),
 	started_at = VALUES(started_at),
 	stopped_at = VALUES(stopped_at)

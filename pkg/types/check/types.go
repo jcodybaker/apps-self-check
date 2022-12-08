@@ -33,8 +33,9 @@ func NewInstance() (*Instance, error) {
 		return nil, err
 	}
 	return &Instance{
-		UUID:     uuid.String(),
-		Hostname: hostname,
+		UUID:      uuid.String(),
+		Hostname:  hostname,
+		StartedAt: time.Now(),
 	}, nil
 }
 
@@ -43,7 +44,7 @@ func (i *Instance) UpdatePublicIPv4(ctx context.Context) error {
 	r := net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, "resolver1.opendns.com")
+			return (&net.Dialer{}).DialContext(ctx, network, "resolver1.opendns.com:53")
 		},
 	}
 	ips, err := r.LookupIP(ctx, "ip4", "myip.opendns.com")
