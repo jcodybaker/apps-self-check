@@ -50,16 +50,16 @@ func (mr *MockStorerMockRecorder) AnalyzeLongestGapPerApp(ctx, start, end, apps,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AnalyzeLongestGapPerApp", reflect.TypeOf((*MockStorer)(nil).AnalyzeLongestGapPerApp), ctx, start, end, apps, output)
 }
 
-// AsyncSaveCheckResults mocks base method.
-func (m *MockStorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
+// AsyncQueryRetry mocks base method.
+func (m *MockStorer) AsyncQueryRetry(ctx context.Context, attemptSchedule []time.Duration, f func(context.Context, int) error) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AsyncSaveCheckResults", ctx, result, attemptSchedule)
+	m.ctrl.Call(m, "AsyncQueryRetry", ctx, attemptSchedule, f)
 }
 
-// AsyncSaveCheckResults indicates an expected call of AsyncSaveCheckResults.
-func (mr *MockStorerMockRecorder) AsyncSaveCheckResults(ctx, result, attemptSchedule interface{}) *gomock.Call {
+// AsyncQueryRetry indicates an expected call of AsyncQueryRetry.
+func (mr *MockStorerMockRecorder) AsyncQueryRetry(ctx, attemptSchedule, f interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AsyncSaveCheckResults", reflect.TypeOf((*MockStorer)(nil).AsyncSaveCheckResults), ctx, result, attemptSchedule)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AsyncQueryRetry", reflect.TypeOf((*MockStorer)(nil).AsyncQueryRetry), ctx, attemptSchedule, f)
 }
 
 // Close mocks base method.
@@ -90,129 +90,16 @@ func (mr *MockStorerMockRecorder) SaveCheckResults(ctx, result interface{}) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveCheckResults", reflect.TypeOf((*MockStorer)(nil).SaveCheckResults), ctx, result)
 }
 
-// Mockstorer is a mock of storer interface.
-type Mockstorer struct {
-	ctrl     *gomock.Controller
-	recorder *MockstorerMockRecorder
-}
-
-// MockstorerMockRecorder is the mock recorder for Mockstorer.
-type MockstorerMockRecorder struct {
-	mock *Mockstorer
-}
-
-// NewMockstorer creates a new mock instance.
-func NewMockstorer(ctrl *gomock.Controller) *Mockstorer {
-	mock := &Mockstorer{ctrl: ctrl}
-	mock.recorder = &MockstorerMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *Mockstorer) EXPECT() *MockstorerMockRecorder {
-	return m.recorder
-}
-
-// AnalyzeLongestGapPerApp mocks base method.
-func (m *Mockstorer) AnalyzeLongestGapPerApp(ctx context.Context, start, end time.Time, apps []string, output func(string, time.Duration, time.Time)) error {
+// UpdateInstance mocks base method.
+func (m *MockStorer) UpdateInstance(ctx context.Context, instance *check.Instance) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AnalyzeLongestGapPerApp", ctx, start, end, apps, output)
+	ret := m.ctrl.Call(m, "UpdateInstance", ctx, instance)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// AnalyzeLongestGapPerApp indicates an expected call of AnalyzeLongestGapPerApp.
-func (mr *MockstorerMockRecorder) AnalyzeLongestGapPerApp(ctx, start, end, apps, output interface{}) *gomock.Call {
+// UpdateInstance indicates an expected call of UpdateInstance.
+func (mr *MockStorerMockRecorder) UpdateInstance(ctx, instance interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AnalyzeLongestGapPerApp", reflect.TypeOf((*Mockstorer)(nil).AnalyzeLongestGapPerApp), ctx, start, end, apps, output)
-}
-
-// AsyncSaveCheckResults mocks base method.
-func (m *Mockstorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "AsyncSaveCheckResults", ctx, result, attemptSchedule)
-}
-
-// AsyncSaveCheckResults indicates an expected call of AsyncSaveCheckResults.
-func (mr *MockstorerMockRecorder) AsyncSaveCheckResults(ctx, result, attemptSchedule interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AsyncSaveCheckResults", reflect.TypeOf((*Mockstorer)(nil).AsyncSaveCheckResults), ctx, result, attemptSchedule)
-}
-
-// Close mocks base method.
-func (m *Mockstorer) Close() error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockstorerMockRecorder) Close() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*Mockstorer)(nil).Close))
-}
-
-// SaveCheckResults mocks base method.
-func (m *Mockstorer) SaveCheckResults(ctx context.Context, result check.CheckResults) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SaveCheckResults", ctx, result)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SaveCheckResults indicates an expected call of SaveCheckResults.
-func (mr *MockstorerMockRecorder) SaveCheckResults(ctx, result interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveCheckResults", reflect.TypeOf((*Mockstorer)(nil).SaveCheckResults), ctx, result)
-}
-
-// doneChan mocks base method.
-func (m *Mockstorer) doneChan() <-chan struct{} {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "doneChan")
-	ret0, _ := ret[0].(<-chan struct{})
-	return ret0
-}
-
-// doneChan indicates an expected call of doneChan.
-func (mr *MockstorerMockRecorder) doneChan() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "doneChan", reflect.TypeOf((*Mockstorer)(nil).doneChan))
-}
-
-// wgAdd mocks base method.
-func (m *Mockstorer) wgAdd(arg0 int) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "wgAdd", arg0)
-}
-
-// wgAdd indicates an expected call of wgAdd.
-func (mr *MockstorerMockRecorder) wgAdd(arg0 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "wgAdd", reflect.TypeOf((*Mockstorer)(nil).wgAdd), arg0)
-}
-
-// wgDone mocks base method.
-func (m *Mockstorer) wgDone() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "wgDone")
-}
-
-// wgDone indicates an expected call of wgDone.
-func (mr *MockstorerMockRecorder) wgDone() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "wgDone", reflect.TypeOf((*Mockstorer)(nil).wgDone))
-}
-
-// wgWait mocks base method.
-func (m *Mockstorer) wgWait() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "wgWait")
-}
-
-// wgWait indicates an expected call of wgWait.
-func (mr *MockstorerMockRecorder) wgWait() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "wgWait", reflect.TypeOf((*Mockstorer)(nil).wgWait))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateInstance", reflect.TypeOf((*MockStorer)(nil).UpdateInstance), ctx, instance)
 }

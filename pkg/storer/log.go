@@ -33,7 +33,7 @@ func (l *LogStorer) SaveCheckResults(ctx context.Context, result check.CheckResu
 
 // AsyncSaveCheckResults saves check results asynchronously with retries on failure.
 func (l *LogStorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
-	asyncSaveCheckResults(ctx, l, result, attemptSchedule)
+	go l.SaveCheckResults(ctx, result)
 }
 
 // Close triggers any asynchronous saves to immediately make a final attempt, waits briefly
@@ -50,5 +50,9 @@ func (l *LogStorer) AnalyzeLongestGapPerApp(
 	apps []string,
 	output func(appID string, interval time.Duration, maxIntervalTS time.Time),
 ) error {
+	return nil
+}
+
+func (l *LogStorer) UpdateInstance(ctx context.Context, instance *check.Instance) error {
 	return nil
 }

@@ -3,6 +3,7 @@ package storer
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,20 +11,15 @@ import (
 	gomock "github.com/golang/mock/gomock"
 )
 
-func TestAsyncSaveCheckResults(t *testing.T) {
+func TestAsyncQueryRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	m := NewMockStorer(ctrl)
-	s := struct {
-		commonStorer
-		Storer
-	}{
-		Storer: m,
-	}
-	s.commonStorer.init()
+	c := &commonStorer{}
+	c.init()
 
 	m.EXPECT().SaveCheckResults(gomock.Any(), check.CheckResults{}).Return(errors.New("failed to save"))
 	m.EXPECT().SaveCheckResults(gomock.Any(), check.CheckResults{
@@ -40,6 +36,17 @@ func TestAsyncSaveCheckResults(t *testing.T) {
 
 	r := check.CheckResults{}
 
-	asyncSaveCheckResults(ctx, &s, r, []time.Duration{0, 1, 1})
-	s.wgWait()
+	c.AsyncQueryRetry(ctx, []time.Duration{0, 1, 1}, func(ctx context.Context, attempt int) error {
+		err := m.SaveCheckResults(ctx, r)
+		if err != nil {
+			r.Errors = append(r.Errors, check.CheckError{
+				Check: "result_save_attempt_" + strconv.Itoa(attempt),
+				Error: err.Error(),
+			})
+			return err
+		}
+		return nil
+	})
+
+	c.wg.Wait()
 }

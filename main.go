@@ -41,24 +41,27 @@ func main() {
 		bindAddr = b
 	}
 
-	storer, err := storer.New(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"))
+	s, err := storer.New(ctx, os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_CA_CERT"), true)
 	if err != nil {
 		log.Fatal().Err(err).Msg("creating storer")
 	}
-	defer storer.Close()
+	defer s.Close()
 
-	labels, err := parseLabels(os.Getenv("LABELS"))
+	instance, err := check.NewInstance()
+	if err != nil {
+		log.Fatal().Err(err).Msg("initializing instance")
+	}
+
+	instance.Labels, err = parseLabels(os.Getenv("LABELS"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("parsing labels")
 	}
 
 	checkerOpts := []checker.CheckerOption{
-		checker.WithAppID(os.Getenv("APP_ID")),
 		checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
 		checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
 		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
-		checker.WithLabels(labels),
-		checker.WithStorer(storer),
+		checker.WithStorer(s),
 	}
 
 	if checkDB := os.Getenv("CHECK_DATABASE_URL"); checkDB != "" {
@@ -77,6 +80,31 @@ func main() {
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		instance.Lock()
+		instance.StoppedAt = time.Now()
+		instance.Unlock()
+		s.AsyncQueryRetry(
+			context.Background(),
+			storer.SaveBackOffSchedule,
+			func(ctx context.Context, attempt int) error {
+				return s.UpdateInstance(ctx, instance)
+			})
+	}()
+	wg.Add(1)
+	s.AsyncQueryRetry(
+		ctx,
+		storer.SaveBackOffSchedule,
+		func(ctx context.Context, attempt int) error {
+			if err := instance.UpdatePublicIPv4(ctx); err != nil {
+				return fmt.Errorf("querying node public IPv4: %w", err)
+			}
+			return s.UpdateInstance(ctx, instance)
+		})
 
 	if checkIntervalS := os.Getenv("CHECK_INTERVAL"); checkIntervalS != "" {
 		checkInterval, err := time.ParseDuration(checkIntervalS)

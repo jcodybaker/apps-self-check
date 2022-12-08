@@ -9,9 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +31,8 @@ const (
 // NewChecker creates a checker.
 func NewChecker(opts ...CheckerOption) *checker {
 	c := &checker{
-		now:      time.Now,
-		hostname: func(hostname string, _ error) string { return hostname }(os.Hostname()),
-		timeout:  defaultTimeout,
+		now:     time.Now,
+		timeout: defaultTimeout,
 	}
 	for _, o := range opts {
 		o(c)
@@ -44,17 +43,10 @@ func NewChecker(opts ...CheckerOption) *checker {
 // CheckerOption describe optional arguments for the checker.
 type CheckerOption func(*checker)
 
-// WithAppID sets the current app ID for the checker.
-func WithAppID(appID string) CheckerOption {
+// WithInstance sets the current instance for the checker.
+func WithInstance(instance *check.Instance) CheckerOption {
 	return func(c *checker) {
-		c.appID = appID
-	}
-}
-
-// WithLabels sets labels to be recorded with each check.
-func WithLabels(l map[string]string) CheckerOption {
-	return func(c *checker) {
-		c.labels = l
+		c.instance = instance
 	}
 }
 
@@ -92,10 +84,8 @@ type checkFunc struct {
 
 type checker struct {
 	now      func() time.Time
-	appID    string
-	hostname string
 	storer   storer.Storer
-	labels   map[string]string
+	instance *check.Instance
 	checks   []checkFunc
 	timeout  time.Duration
 }
@@ -121,7 +111,17 @@ func (c *checker) Run(ctx context.Context, interval time.Duration) {
 				if ctx.Err() != nil {
 					return // abandon results if the ctx was canceled mid-check.
 				}
-				c.storer.AsyncSaveCheckResults(ctx, r, storer.SaveBackOffSchedule)
+				c.storer.AsyncQueryRetry(ctx, storer.SaveBackOffSchedule, func(ctx context.Context, attempt int) error {
+					err := c.storer.SaveCheckResults(ctx, r)
+					if err != nil {
+						r.Errors = append(r.Errors, check.CheckError{
+							Check: "result_save_attempt_" + strconv.Itoa(attempt),
+							Error: err.Error(),
+						})
+						return err
+					}
+					return nil
+				})
 			}()
 		}
 	}
@@ -146,9 +146,7 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 	var wg sync.WaitGroup
 	r := check.CheckResults{
 		TS:       c.now(),
-		AppID:    c.appID,
-		Labels:   c.labels,
-		Hostname: c.hostname,
+		Instance: c.instance,
 	}
 	var l sync.Mutex
 	for _, ch := range c.checks {

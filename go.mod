@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/squirrel v1.5.3
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/golang/mock v1.6.1-0.20220107202009-96d9cb5c44ba
+	github.com/google/uuid v1.3.0
 	github.com/iancoleman/strcase v0.2.0
 	github.com/rs/zerolog v1.28.0
 	github.com/spf13/cobra v1.6.1

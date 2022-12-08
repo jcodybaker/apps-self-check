@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
@@ -31,6 +32,7 @@ var mysqlConfigID = 1
 type mysqlStorer struct {
 	db *sql.DB
 	commonStorer
+	instanceLock sync.Mutex
 }
 
 // NewMySQLStorer creates a new storer driver for a MySQL backend.
@@ -100,7 +102,8 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckRe
 		}
 	}()
 
-	r, err := sq.Insert("checks").Columns("app_id", "hostname", "ts").Values(result.AppID, result.Hostname, result.TS).RunWith(tx).ExecContext(ctx)
+	r, err := sq.Insert("checks").Columns("instance_id", "ts").
+		Values(result.Instance.DatabaseID, result.TS).RunWith(tx).ExecContext(ctx)
 	if err != nil {
 		return fmt.Errorf("storing check result: %w", err)
 	}
@@ -109,15 +112,6 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckRe
 		return err
 	}
 
-	if len(result.Labels) > 0 {
-		q := sq.Insert("check_labels").Columns("check_id", "k", "v")
-		for k, v := range result.Labels {
-			q = q.Values(id, k, v)
-		}
-		if _, err = q.RunWith(tx).ExecContext(ctx); err != nil {
-			return fmt.Errorf("storing labels: %w", err)
-		}
-	}
 	if len(result.Errors) > 0 {
 		q := sq.Insert("check_errors").Columns("check_id", "check_name", "error")
 		for _, e := range result.Errors {
@@ -142,11 +136,6 @@ func (m *mysqlStorer) SaveCheckResults(ctx context.Context, result check.CheckRe
 	}
 
 	return nil
-}
-
-// AsyncSaveCheckResults saves check results asynchronously with retries on failure.
-func (m *mysqlStorer) AsyncSaveCheckResults(ctx context.Context, result check.CheckResults, attemptSchedule []time.Duration) {
-	asyncSaveCheckResults(ctx, m, result, attemptSchedule)
 }
 
 // Close shuts down the database handle and any async savers.
@@ -185,7 +174,37 @@ func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
 	if !createTables {
 		return nil
 	}
-	exists, err := m.tableExists(ctx, "checks")
+
+	exists, err := m.tableExists(ctx, "instance")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// We keep the "IF NOT EXISTS" because there may be other instances creating these tables.
+		_, err := m.db.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS instances (
+				id INT NOT NULL AUTO_INCREMENT,
+				uuid CHAR(36) NOT NULL,
+				hostname VARCHAR(64) NOT NULL,
+				app_id CHAR(36) NULL,
+				public_ipv4 CHAR(15) NULL,
+				started_at TIMESTAMP(6) NOT NULL,
+				stopped_at TIMESTAMP(6) NOT NULL,
+				KEY app_id (app_id),
+				KEY public_ipv4 (public_ipv4),
+				KEY hostname (hostname),
+				KEY started_at (started_at),
+				KEY stopped_at (stopped_at),
+				UNIQUE KEY uuid (uuid)
+				PRIMARY KEY(id)
+			)
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	exists, err = m.tableExists(ctx, "checks")
 	if err != nil {
 		return err
 	}
@@ -194,10 +213,9 @@ func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
 		_, err := m.db.ExecContext(ctx, `
 			CREATE TABLE IF NOT EXISTS checks (
 				id INT NOT NULL AUTO_INCREMENT,
-				hostname VARCHAR(64) NOT NULL,
-				app_id CHAR(36) NOT NULL,
+				instance_id INT NOT NULL,
 				ts TIMESTAMP(6) NOT NULL,
-				KEY app_id_ts (app_id, ts),
+				KEY app_id_ts (instance_id, ts),
 				PRIMARY KEY(id)
 			)
 		`)
@@ -250,8 +268,8 @@ func (m *mysqlStorer) init(ctx context.Context, createTables bool) error {
 	}
 	if !exists {
 		_, err = m.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS check_labels (
-			check_id INT NOT NULL,
+		CREATE TABLE IF NOT EXISTS instance_labels (
+			instance_id INT NOT NULL,
 			k VARCHAR(64) NOT NULL,
 			v VARCHAR(64) NOT NULL,
 			KEY kv (k, v),
@@ -325,4 +343,68 @@ func (m *mysqlStorer) tableExists(ctx context.Context, table string) (bool, erro
 		}
 	}
 	return true, nil
+}
+
+func (m *mysqlStorer) ensureInstance(ctx context.Context, instance *check.Instance) error {
+	m.instanceLock.Lock()
+	defer m.instanceLock.Unlock()
+	if instance.DatabaseID != 0 {
+		// If the database ID exists, we don't need to insert the instance. Updates to the instance
+		// are handled via UpdateInstance.
+		return nil
+	}
+	return m.updateInstance(ctx, instance)
+}
+
+func (m *mysqlStorer) updateInstance(ctx context.Context, instance *check.Instance) error {
+	r, err := sq.Insert("instances").Columns(
+		"uuid",
+		"hostname",
+		"app_id",
+		"public_ipv4",
+		"started_at",
+		"stopped_at",
+	).Values(
+		instance.UUID,
+		sql.NullString{Valid: instance.AppID != "", String: instance.AppID},
+		instance.Hostname,
+		sql.NullString{Valid: instance.PublicIPv4 != "", String: instance.PublicIPv4},
+		instance.StartedAt,
+		sql.NullTime{Valid: !instance.StoppedAt.IsZero(), Time: instance.StoppedAt},
+	).Suffix(`
+	ON DUPLICATE KEY UPDATE
+	id = LAST_INSERT_ID(id),
+	uuid = VALUES(uuid),
+	hostname = VALUES(hostname),
+	app_id = VALUES(app_id),
+	public_ipv4 = VALUES(public_ipv4),
+	started_at = VALUES(started_at),
+	stopped_at = VALUES(stopped_at)
+	`).RunWith(m.db).ExecContext(ctx)
+	if err != nil {
+		return fmt.Errorf("updating instance record: %w", err)
+	}
+	id, err := r.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("reading instance id: %w", err)
+	}
+	instance.DatabaseID = id
+	if len(instance.Labels) > 0 {
+		// We won't cleanup removed labels.
+		q := sq.Insert("instance_labels").Columns("instance_id", "k", "v")
+		for k, v := range instance.Labels {
+			q = q.Values(id, k, v)
+		}
+		q = q.Suffix(`ON DUPLICATE KEY UPDATE v = VALUES(v)`)
+		if _, err = q.RunWith(m.db).ExecContext(ctx); err != nil {
+			return fmt.Errorf("storing instance labels: %w", err)
+		}
+	}
+	return nil
+}
+
+func (m *mysqlStorer) UpdateInstance(ctx context.Context, instance *check.Instance) error {
+	m.instanceLock.Lock()
+	defer m.instanceLock.Unlock()
+	return m.updateInstance(ctx, instance)
 }
