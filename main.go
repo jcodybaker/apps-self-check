@@ -61,6 +61,7 @@ func main() {
 		log.Fatal().Err(err).Msg("initializing instance")
 	}
 
+	instance.AppID = os.Getenv("APP_ID")
 	instance.Labels, err = parseLabels(os.Getenv("LABELS"))
 	if err != nil {
 		log.Fatal().Err(err).Msg("parsing labels")
