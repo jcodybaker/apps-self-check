@@ -295,12 +295,13 @@ func (m *mysqlStorer) AnalyzeLongestGapPerApp(
 ) error {
 	cond := sq.And{sq.GtOrEq{"ts": start}, sq.LtOrEq{"ts": end}}
 	if len(apps) > 0 {
-		cond = append(cond, sq.Eq{"app_id": apps})
+		cond = append(cond, sq.Eq{"instances.app_id": apps})
 	}
-	q := sq.Select("app_id", "ts").
+	q := sq.Select("instances.app_id", "ts").
+		InnerJoin("instances on instances.id = checks.instance_id").
 		From("checks").
 		Where(cond).
-		OrderBy("app_id", "ts ASC")
+		OrderBy("instances.app_id", "ts ASC")
 	rows, err := q.RunWith(m.db).QueryContext(ctx)
 	if err != nil {
 		return err
