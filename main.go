@@ -101,7 +101,8 @@ func main() {
 	c := checker.NewChecker(checkerOpts...)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/check", c.HTTPHandler)
+	mux.HandleFunc("/check", c.CheckHandler)
+	mux.HandleFunc("/errors", c.ErrorsHandler)
 
 	var wg sync.WaitGroup
 	defer wg.Wait()

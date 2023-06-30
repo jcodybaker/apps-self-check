@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"container/list"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -25,14 +26,16 @@ import (
 )
 
 const (
-	defaultTimeout = 6 * time.Second
+	defaultTimeout           = 6 * time.Second
+	defaultRecentErrorsLimit = 10
 )
 
 // NewChecker creates a checker.
 func NewChecker(opts ...CheckerOption) *checker {
 	c := &checker{
-		now:     time.Now,
-		timeout: defaultTimeout,
+		now:          time.Now,
+		timeout:      defaultTimeout,
+		recentErrors: list.New(),
 	}
 	for _, o := range opts {
 		o(c)
@@ -77,17 +80,28 @@ func WithTimeout(timeout time.Duration) CheckerOption {
 	}
 }
 
+// WithRecentErrorsLimit sets the number of recent errors which will be retained. Explicitly
+// setting a value of 0 will log no errors, -1 will be unlimited.
+func WithRecentErrorsLimit(limit int) CheckerOption {
+	return func(c *checker) {
+		c.recentErrorsLimit = limit
+	}
+}
+
 type checkFunc struct {
 	f    check.Check
 	name string
 }
 
 type checker struct {
-	now      func() time.Time
-	storer   storer.Storer
-	instance *check.Instance
-	checks   []checkFunc
-	timeout  time.Duration
+	now               func() time.Time
+	storer            storer.Storer
+	instance          *check.Instance
+	checks            []checkFunc
+	timeout           time.Duration
+	recentErrors      *list.List
+	recentErrorsLimit int
+	recentErrorsLock  sync.Mutex
 }
 
 // Run executes periodically until the ctx is cancelled.
@@ -127,7 +141,7 @@ func (c *checker) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (c *checker) HTTPHandler(w http.ResponseWriter, r *http.Request) {
+func (c *checker) CheckHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	results := c.doChecks(ctx)
 	if err := c.storer.SaveCheckResults(ctx, results); err != nil {
@@ -139,6 +153,26 @@ func (c *checker) HTTPHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if err := j.Encode(results); err != nil {
 		log.Ctx(ctx).Warn().Err(err).Msg("encoding spot check")
+	}
+}
+
+// Errors handler displays the most recent check results which include errors.
+func (c *checker) ErrorsHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	c.recentErrorsLock.Lock()
+	errorResults := make([]check.CheckResults, 0, c.recentErrors.Len())
+	for e := c.recentErrors.Front(); e != nil; e = e.Next() {
+		r := e.Value.(check.CheckResults)
+		errorResults = append(errorResults, r)
+	}
+	c.recentErrorsLock.Unlock()
+
+	j := json.NewEncoder(w)
+	j.SetIndent("  ", "  ")
+	w.Header().Add("content-type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := j.Encode(errorResults); err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msg("encoding error results check")
 	}
 }
 
@@ -185,6 +219,19 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 		}()
 	}
 	wg.Wait()
+	if len(r.Errors) > 0 {
+		c.recentErrorsLock.Lock()
+		defer c.recentErrorsLock.Unlock()
+		if c.recentErrorsLimit != -1 {
+			for c.recentErrorsLimit >= c.recentErrors.Len() && c.recentErrors.Len() > 0 {
+				// Trim any excess errors before adding more.
+				c.recentErrors.Remove(c.recentErrors.Back())
+			}
+		}
+		if c.recentErrorsLimit != 0 {
+			c.recentErrors.PushFront(r)
+		}
+	}
 	return r
 }
 
