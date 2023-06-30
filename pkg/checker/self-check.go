@@ -93,10 +93,10 @@ type checkFunc struct {
 	name string
 }
 
-type checkStats struct {
-	cycles           int
-	cyclesWithErrors int
-	lastCheck        time.Time
+type CheckStats struct {
+	Cycles           int
+	CyclesWithErrors int
+	LastCheck        time.Time
 }
 
 type checker struct {
@@ -108,7 +108,7 @@ type checker struct {
 	recentErrors      *list.List
 	recentErrorsLimit int
 	statLock          sync.Mutex
-	stats             checkStats
+	stats             CheckStats
 }
 
 // Run executes periodically until the ctx is cancelled.
@@ -155,7 +155,7 @@ func (c *checker) CheckHandler(w http.ResponseWriter, r *http.Request) {
 		log.Ctx(ctx).Err(err).Msg("saving check results")
 	}
 	j := json.NewEncoder(w)
-	j.SetIndent("  ", "  ")
+	j.SetIndent("", "  ")
 	w.Header().Add("content-type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := j.Encode(results); err != nil {
@@ -169,7 +169,7 @@ func (c *checker) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	c.statLock.Lock()
 	out := struct {
 		RecentErrors []check.CheckResults
-		Stats        checkStats
+		Stats        CheckStats
 	}{
 		RecentErrors: make([]check.CheckResults, 0, c.recentErrors.Len()),
 		Stats:        c.stats,
@@ -181,7 +181,7 @@ func (c *checker) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	c.statLock.Unlock()
 
 	j := json.NewEncoder(w)
-	j.SetIndent("  ", "  ")
+	j.SetIndent("", "  ")
 	w.Header().Add("content-type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := j.Encode(out); err != nil {
@@ -234,10 +234,10 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 	wg.Wait()
 	c.statLock.Lock()
 	defer c.statLock.Unlock()
-	c.stats.cycles++
-	c.stats.lastCheck = r.TS
+	c.stats.Cycles++
+	c.stats.LastCheck = r.TS
 	if len(r.Errors) > 0 {
-		c.stats.cyclesWithErrors++
+		c.stats.CyclesWithErrors++
 		if c.recentErrorsLimit != -1 {
 			for c.recentErrorsLimit >= c.recentErrors.Len() && c.recentErrors.Len() > 0 {
 				// Trim any excess errors before adding more.
