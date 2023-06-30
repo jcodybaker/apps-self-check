@@ -170,9 +170,11 @@ func (c *checker) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	out := struct {
 		RecentErrors []check.CheckResults
 		Stats        CheckStats
+		Instance     *check.Instance
 	}{
 		RecentErrors: make([]check.CheckResults, 0, c.recentErrors.Len()),
 		Stats:        c.stats,
+		Instance:     c.instance,
 	}
 	for e := c.recentErrors.Front(); e != nil; e = e.Next() {
 		r := e.Value.(check.CheckResults)
