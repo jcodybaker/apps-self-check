@@ -75,11 +75,18 @@ func main() {
 		})
 
 	checkerOpts := []checker.CheckerOption{
-		checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
-		checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
-		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN"), "10.0.0.0/8"))),
 		checker.WithInstance(instance),
 		checker.WithStorer(s),
+	}
+
+	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
+		checkerOpts = append(checkerOpts, checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(publicURL))))
+	}
+	if privateDomain := os.Getenv("PRIVATE_DOMAIN"); privateDomain != "" {
+		checkerOpts = append(checkerOpts,
+			checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+privateDomain+":8080/health"))),
+			checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(privateDomain, "10.0.0.0/8"))),
+		)
 	}
 
 	if checkDB := os.Getenv("CHECK_DATABASE_URL"); checkDB != "" {
