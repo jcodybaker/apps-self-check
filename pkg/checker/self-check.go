@@ -189,7 +189,7 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 }
 
 // NewDNSCheck adds a check which probes the specified hostname
-func NewDNSCheck(hostname string) (check.Check, error) {
+func NewDNSCheck(hostname string, cidr string) (check.Check, error) {
 	if strings.Contains(hostname, "://") {
 		// If it looks like a URL, we'll try to isolate the hostname.
 		u, err := url.Parse(hostname)
@@ -204,6 +204,14 @@ func NewDNSCheck(hostname string) (check.Check, error) {
 			}
 		}
 	}
+	var parsedCIDR *net.IPNet = &net.IPNet{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}
+	if cidr != "" {
+		var err error
+		_, parsedCIDR, err = net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing cidr for DNS match: %v", err)
+		}
+	}
 	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
 		ips, err := net.LookupHost(hostname)
 		if err != nil {
@@ -211,6 +219,11 @@ func NewDNSCheck(hostname string) (check.Check, error) {
 		}
 		if len(ips) == 0 {
 			return nil, errors.New("no addresses found")
+		}
+		for _, ip := range ips {
+			if !parsedCIDR.Contains(net.ParseIP(ip)) {
+				return nil, fmt.Errorf("address %q was not in expected range %q", ip, parsedCIDR.String())
+			}
 		}
 		return nil, nil
 	}, nil

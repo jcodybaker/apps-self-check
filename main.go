@@ -77,7 +77,7 @@ func main() {
 	checkerOpts := []checker.CheckerOption{
 		checker.WithCheck("self_public_http", checkMust(checker.NewHTTPCheck(os.Getenv("PUBLIC_URL")))),
 		checker.WithCheck("self_private_url", checkMust(checker.NewHTTPCheck("http://"+os.Getenv("PRIVATE_DOMAIN")+":8080/health"))),
-		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN")))),
+		checker.WithCheck("internal_dns", checkMust(checker.NewDNSCheck(os.Getenv("PRIVATE_DOMAIN"), "10.0.0.0/8"))),
 		checker.WithInstance(instance),
 		checker.WithStorer(s),
 	}
@@ -88,7 +88,7 @@ func main() {
 				checker.WithCheck("database", checkMust(checker.NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
 		}
 		checkerOpts = append(checkerOpts,
-			checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB))))
+			checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, os.Getenv("CHECK_DATABASE_CIDR")))))
 	}
 
 	c := checker.NewChecker(checkerOpts...)
