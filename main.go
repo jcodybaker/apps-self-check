@@ -102,7 +102,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/check", c.CheckHandler)
-	mux.HandleFunc("/errors", c.ErrorsHandler)
+	mux.HandleFunc("/status", c.StatusHandler)
 
 	var wg sync.WaitGroup
 	defer wg.Wait()

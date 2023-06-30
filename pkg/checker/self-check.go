@@ -93,6 +93,12 @@ type checkFunc struct {
 	name string
 }
 
+type checkStats struct {
+	cycles           int
+	cyclesWithErrors int
+	lastCheck        time.Time
+}
+
 type checker struct {
 	now               func() time.Time
 	storer            storer.Storer
@@ -101,7 +107,8 @@ type checker struct {
 	timeout           time.Duration
 	recentErrors      *list.List
 	recentErrorsLimit int
-	recentErrorsLock  sync.Mutex
+	statLock          sync.Mutex
+	stats             checkStats
 }
 
 // Run executes periodically until the ctx is cancelled.
@@ -156,22 +163,28 @@ func (c *checker) CheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Errors handler displays the most recent check results which include errors.
-func (c *checker) ErrorsHandler(w http.ResponseWriter, r *http.Request) {
+// StatusHandler displays the most recent check results which include errors + some stats.
+func (c *checker) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	c.recentErrorsLock.Lock()
-	errorResults := make([]check.CheckResults, 0, c.recentErrors.Len())
+	c.statLock.Lock()
+	out := struct {
+		RecentErrors []check.CheckResults
+		Stats        checkStats
+	}{
+		RecentErrors: make([]check.CheckResults, 0, c.recentErrors.Len()),
+		Stats:        c.stats,
+	}
 	for e := c.recentErrors.Front(); e != nil; e = e.Next() {
 		r := e.Value.(check.CheckResults)
-		errorResults = append(errorResults, r)
+		out.RecentErrors = append(out.RecentErrors, r)
 	}
-	c.recentErrorsLock.Unlock()
+	c.statLock.Unlock()
 
 	j := json.NewEncoder(w)
 	j.SetIndent("  ", "  ")
 	w.Header().Add("content-type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := j.Encode(errorResults); err != nil {
+	if err := j.Encode(out); err != nil {
 		log.Ctx(ctx).Warn().Err(err).Msg("encoding error results check")
 	}
 }
@@ -219,9 +232,12 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 		}()
 	}
 	wg.Wait()
+	c.statLock.Lock()
+	defer c.statLock.Unlock()
+	c.stats.cycles++
+	c.stats.lastCheck = r.TS
 	if len(r.Errors) > 0 {
-		c.recentErrorsLock.Lock()
-		defer c.recentErrorsLock.Unlock()
+		c.stats.cyclesWithErrors++
 		if c.recentErrorsLimit != -1 {
 			for c.recentErrorsLimit >= c.recentErrors.Len() && c.recentErrors.Len() > 0 {
 				// Trim any excess errors before adding more.
