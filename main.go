@@ -100,6 +100,7 @@ func main() {
 
 	c := checker.NewChecker(checkerOpts...)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", healthHandler)
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/check", c.CheckHandler)
 	mux.HandleFunc("/status", c.StatusHandler)
