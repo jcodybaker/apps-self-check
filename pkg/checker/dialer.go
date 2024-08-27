@@ -95,7 +95,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 			}
 		answersLoop:
 			for _, answer := range in.Answer {
-				log.Debug().Str("answer", answer.String()).Str("query", dnsQ.String()).Msg("got answer")
+				log.Ctx(ctx).Debug().Str("answer", answer.String()).Str("query", dnsQ.String()).Msg("got answer")
 				switch answer.Header().Rrtype {
 				case dns.TypeA:
 					ip = answer.(*dns.A).A
