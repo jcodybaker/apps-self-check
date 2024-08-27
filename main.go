@@ -94,8 +94,11 @@ func main() {
 			checkerOpts = append(checkerOpts,
 				checker.WithCheck("database", checkMust(checker.NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
 		}
-		// checkerOpts = append(checkerOpts,
-		// 	checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, os.Getenv("CHECK_DATABASE_CIDR")))))
+		// This does a separate DNS check which ensures the DNS response is within the correct CIDR.
+		if checkDBCIDR := os.Getenv("CHECK_DATABASE_CIDR"); checkDBCIDR != "" {
+			checkerOpts = append(checkerOpts,
+				checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, checkDBCIDR))))
+		}
 	}
 
 	c := checker.NewChecker(checkerOpts...)
