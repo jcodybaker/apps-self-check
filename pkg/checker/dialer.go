@@ -80,6 +80,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 			dnsQ.Question = []dns.Question{
 				{
 					Name:   addr,
+					Qtype:  dns.TypeA,
 					Qclass: dns.ClassINET,
 				},
 			}
