@@ -66,43 +66,45 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 		if err != nil {
 			return nil, err
 		}
-		m1 := new(dns.Msg)
-		m1.Id = dns.Id()
-		m1.RecursionDesired = true
-		m1.Question = []dns.Question{
-			{
-				Name:   addr,
-				Qclass: dns.ClassINET,
-			},
-		}
-		start := time.Now()
-		in, _, err := c.Exchange(m1, dnsServer)
-		if err != nil {
-			return nil, fmt.Errorf("dns error: %w", err)
-		}
-		dnsDuration := time.Since(start)
-		instrument.measurements <- &check.CheckMeasurement{
-			Check: "dns_duration",
-			Value: dnsDuration.Seconds(),
-		}
-		var ip net.IP
-	answers:
-		for _, answer := range in.Answer {
-			switch answer.Header().Rrtype {
-			case dns.TypeA:
-				ip = answer.(*dns.A).A
-				break answers
-			case dns.TypeAAAA:
-				ip = answer.(*dns.AAAA).AAAA
-				break answers
-			default:
-				continue
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			dnsQ := new(dns.Msg)
+			dnsQ.Id = dns.Id()
+			dnsQ.RecursionDesired = true
+			dnsQ.Question = []dns.Question{
+				{
+					Name:   addr,
+					Qclass: dns.ClassINET,
+				},
+			}
+			start := time.Now()
+			in, _, err := c.Exchange(dnsQ, dnsServer)
+			if err != nil {
+				return nil, fmt.Errorf("dns error: %w", err)
+			}
+			dnsDuration := time.Since(start)
+			instrument.measurements <- &check.CheckMeasurement{
+				Check: "dns_duration",
+				Value: dnsDuration.Seconds(),
+			}
+		answersLoop:
+			for _, answer := range in.Answer {
+				switch answer.Header().Rrtype {
+				case dns.TypeA:
+					ip = answer.(*dns.A).A
+					break answersLoop
+				case dns.TypeAAAA:
+					ip = answer.(*dns.AAAA).AAAA
+					break answersLoop
+				default:
+					continue
+				}
 			}
 		}
 		if ip == nil {
 			return nil, errors.New("dns error: no addresses found")
 		}
-		start = time.Now()
+		start := time.Now()
 		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
 		if err != nil {
 			return nil, err
