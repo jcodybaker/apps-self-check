@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
 
 	"github.com/miekg/dns"
@@ -93,6 +95,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 			}
 		answersLoop:
 			for _, answer := range in.Answer {
+				log.Debug().Str("answer", answer.String()).Str("query", dnsQ.String()).Msg("got answer")
 				switch answer.Header().Rrtype {
 				case dns.TypeA:
 					ip = answer.(*dns.A).A
