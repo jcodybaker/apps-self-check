@@ -84,6 +84,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 				},
 			}
 			start := time.Now()
+			log.Ctx(ctx).Debug().Str("query", dnsQ.String()).Msg("making DNS query")
 			in, _, err := c.Exchange(dnsQ, dnsServer)
 			if err != nil {
 				return nil, fmt.Errorf("dns error: %w", err)
