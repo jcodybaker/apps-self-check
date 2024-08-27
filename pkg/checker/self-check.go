@@ -21,6 +21,7 @@ import (
 	"github.com/digitalocean/apps-self-check/pkg/types/check"
 	"github.com/go-sql-driver/mysql"
 	"github.com/iancoleman/strcase"
+	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
 	"github.com/xo/dburl"
 )
@@ -269,6 +270,9 @@ func NewDNSCheck(hostname string, cidr string) (check.Check, error) {
 			}
 		}
 	}
+	if !strings.HasSuffix(hostname, ".") {
+		hostname += "."
+	}
 	var parsedCIDR *net.IPNet = &net.IPNet{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}
 	if cidr != "" {
 		var err error
@@ -277,16 +281,37 @@ func NewDNSCheck(hostname string, cidr string) (check.Check, error) {
 			return nil, fmt.Errorf("parsing cidr for DNS match: %v", err)
 		}
 	}
+	dnsConfig, _ := dns.ClientConfigFromFile("/etc/resolv.conf")
+	if dnsConfig == nil || len(dnsConfig.Servers) == 0 {
+		return nil, errors.New("no dns servers found")
+	}
+	dnsServer := net.JoinHostPort(dnsConfig.Servers[0], dnsConfig.Port)
+	c := new(dns.Client)
+	c.Timeout = time.Duration(dnsConfig.Timeout) * time.Second
 	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
-		ips, err := net.LookupHost(hostname)
+		m1 := new(dns.Msg)
+		m1.Id = dns.Id()
+		m1.RecursionDesired = true
+		m1.Question = []dns.Question{
+			{
+				Name:   hostname,
+				Qtype:  dns.TypeA,
+				Qclass: dns.ClassINET,
+			},
+		}
+		in, _, err := c.Exchange(m1, dnsServer)
 		if err != nil {
 			return nil, err
 		}
-		if len(ips) == 0 {
+		if len(in.Answer) == 0 {
 			return nil, errors.New("no addresses found")
 		}
-		for _, ip := range ips {
-			if !parsedCIDR.Contains(net.ParseIP(ip)) {
+		for _, answer := range in.Answer {
+			if answer.Header().Rrtype != dns.TypeA {
+				continue
+			}
+			ip := answer.(*dns.A).A
+			if !parsedCIDR.Contains(ip) {
 				return nil, fmt.Errorf("address %q was not in expected range %q", ip, parsedCIDR.String())
 			}
 		}
