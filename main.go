@@ -94,8 +94,8 @@ func main() {
 			checkerOpts = append(checkerOpts,
 				checker.WithCheck("database", checkMust(checker.NewMySQLCheck(checkDB, os.Getenv("CHECK_DATABASE_CA_CERT")))))
 		}
-		checkerOpts = append(checkerOpts,
-			checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, os.Getenv("CHECK_DATABASE_CIDR")))))
+		// checkerOpts = append(checkerOpts,
+		// 	checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, os.Getenv("CHECK_DATABASE_CIDR")))))
 	}
 
 	c := checker.NewChecker(checkerOpts...)

@@ -227,7 +227,11 @@ func (c *checker) doChecks(ctx context.Context) check.CheckResults {
 				})
 				return
 			}
-			r.Measurements = append(r.Measurements, measurements...)
+			for _, m := range measurements {
+				m.Check = ch.name + "_" + m.Check
+				r.Measurements = append(r.Measurements, m)
+			}
+
 			r.Measurements = append(r.Measurements, check.CheckMeasurement{
 				Check: ch.name + "_duration",
 				Value: finish.Sub(start).Seconds(),
@@ -387,17 +391,24 @@ func NewMySQLCheck(uri, cert string) (check.Check, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building mysql connector")
 	}
+	dialer, err := NewInsturmentedTCPDialContext()
+	if err != nil {
+		return nil, err
+	}
+	mysql.RegisterDialContext("tcp", dialer)
 	// Ok we are FINALLY done with all of the setup.  This is the real check.
 	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
-		dbConn, err := connector.Connect(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer dbConn.Close()
-		pinger, ok := dbConn.(driver.Pinger)
-		if !ok {
-			return nil, errors.New("mysql driver missing Ping(ctx)")
-		}
-		return nil, pinger.Ping(ctx)
+		return WithDialerInstrument(ctx, func(ctx context.Context) ([]check.CheckMeasurement, error) {
+			dbConn, err := connector.Connect(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer dbConn.Close()
+			pinger, ok := dbConn.(driver.Pinger)
+			if !ok {
+				return nil, errors.New("mysql driver missing Ping(ctx)")
+			}
+			return nil, pinger.Ping(ctx)
+		})
 	}, nil
 }
