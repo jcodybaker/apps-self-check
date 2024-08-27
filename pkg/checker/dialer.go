@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +69,9 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 		}
 		ip := net.ParseIP(addr)
 		if ip == nil {
+			if !strings.HasSuffix(addr, ".") {
+				addr += "."
+			}
 			dnsQ := new(dns.Msg)
 			dnsQ.Id = dns.Id()
 			dnsQ.RecursionDesired = true
