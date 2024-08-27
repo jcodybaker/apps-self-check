@@ -97,7 +97,7 @@ func main() {
 		// This does a separate DNS check which ensures the DNS response is within the correct CIDR.
 		if checkDBCIDR := os.Getenv("CHECK_DATABASE_CIDR"); checkDBCIDR != "" {
 			checkerOpts = append(checkerOpts,
-				checker.WithCheck("database_dns", checkMust(checker.NewDNSCheck(checkDB, checkDBCIDR))))
+				checker.WithCheck("database_dns_cidr", checkMust(checker.NewDNSCheck(checkDB, checkDBCIDR))))
 		}
 	}
 
