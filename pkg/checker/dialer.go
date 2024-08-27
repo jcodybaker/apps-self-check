@@ -48,13 +48,6 @@ func WithDialerInstrument(ctx context.Context, f check.Check) (measurements []ch
 }
 
 func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) (net.Conn, error), error) {
-	dnsConfig, _ := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if dnsConfig == nil || len(dnsConfig.Servers) == 0 {
-		return nil, errors.New("no dns servers found")
-	}
-	dnsServer := net.JoinHostPort(dnsConfig.Servers[0], dnsConfig.Port)
-	c := new(dns.Client)
-	c.Timeout = time.Duration(dnsConfig.Timeout) * time.Second
 	d := &net.Dialer{}
 	return func(ctx context.Context, address string) (net.Conn, error) {
 		v := ctx.Value(dialerInsturmentKey{})
@@ -83,7 +76,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 				},
 			}
 			start := time.Now()
-			in, _, err := c.Exchange(dnsQ, dnsServer)
+			dnsResp, _, err := dnsExchange(dnsQ)
 			if err != nil {
 				return nil, fmt.Errorf("dns error: %w", err)
 			}
@@ -93,7 +86,7 @@ func NewInsturmentedTCPDialContext() (func(ctx context.Context, address string) 
 				Value: dnsDuration.Seconds(),
 			}
 		answersLoop:
-			for _, answer := range in.Answer {
+			for _, answer := range dnsResp.Answer {
 				switch answer.Header().Rrtype {
 				case dns.TypeA:
 					ip = answer.(*dns.A).A

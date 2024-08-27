@@ -285,32 +285,25 @@ func NewDNSCheck(hostname string, cidr string) (check.Check, error) {
 			return nil, fmt.Errorf("parsing cidr for DNS match: %v", err)
 		}
 	}
-	dnsConfig, _ := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if dnsConfig == nil || len(dnsConfig.Servers) == 0 {
-		return nil, errors.New("no dns servers found")
-	}
-	dnsServer := net.JoinHostPort(dnsConfig.Servers[0], dnsConfig.Port)
-	c := new(dns.Client)
-	c.Timeout = time.Duration(dnsConfig.Timeout) * time.Second
 	return func(ctx context.Context) ([]check.CheckMeasurement, error) {
-		m1 := new(dns.Msg)
-		m1.Id = dns.Id()
-		m1.RecursionDesired = true
-		m1.Question = []dns.Question{
+		q := new(dns.Msg)
+		q.Id = dns.Id()
+		q.RecursionDesired = true
+		q.Question = []dns.Question{
 			{
 				Name:   hostname,
 				Qtype:  dns.TypeA,
 				Qclass: dns.ClassINET,
 			},
 		}
-		in, _, err := c.Exchange(m1, dnsServer)
+		resp, _, err := dnsExchange(q)
 		if err != nil {
 			return nil, err
 		}
-		if len(in.Answer) == 0 {
+		if len(resp.Answer) == 0 {
 			return nil, errors.New("no addresses found")
 		}
-		for _, answer := range in.Answer {
+		for _, answer := range resp.Answer {
 			if answer.Header().Rrtype != dns.TypeA {
 				continue
 			}
