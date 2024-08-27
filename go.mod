@@ -1,6 +1,6 @@
 module github.com/digitalocean/apps-self-check
 
-go 1.18
+go 1.22
 
 require (
 	github.com/Masterminds/squirrel v1.5.3
