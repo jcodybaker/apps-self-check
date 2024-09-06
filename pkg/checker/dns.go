@@ -2,8 +2,10 @@ package checker
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +30,15 @@ var dnsClientConfig = sync.OnceValues(func() (*dns.ClientConfig, error) {
 	if len(dnsConfig.Servers) == 0 {
 		return nil, errors.New("no dns servers found")
 	}
+	if timeout := os.Getenv("DNS_TIMEOUT"); timeout != "" {
+		t, err := strconv.Atoi(timeout)
+		if err != nil {
+			return nil, fmt.Errorf("parsing DNS_TIMEOUT: %v", err)
+		}
+		dnsConfig.Timeout = t
+	} else {
+		dnsConfig.Timeout = 1
+	}
 	return dnsConfig, nil
 })
 
@@ -37,6 +48,5 @@ func dnsExchange(m *dns.Msg) (*dns.Msg, time.Duration, error) {
 		return nil, 0, err
 	}
 	c := new(dns.Client)
-	c.Timeout = time.Duration(dnsConfig.Timeout) * time.Second
 	return c.Exchange(m, net.JoinHostPort(dnsConfig.Servers[0], dnsConfig.Port))
 }
